@@ -197,10 +197,12 @@ TOOL_MAP = {
     "check_calendar": query_calendar,
     "create_task": create_task_tool,
     "create_task_tool": create_task_tool,
+    "create_event": create_task_tool,  # LLM sometimes uses this name
     "update_task": update_task_tool,
     "update_task_tool": update_task_tool,
     "delete_task": delete_task_tool,
     "delete_task_tool": delete_task_tool,
+    "delete_event": delete_task_tool,
     "query_weather": query_weather,
     "query_flight": query_flight,
     "search_knowledge": search_knowledge,

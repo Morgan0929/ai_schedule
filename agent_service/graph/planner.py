@@ -14,6 +14,8 @@ PLANNER_SYSTEM_PROMPT = """你是一个日程管理 AI 的规划器 (Planner)。
 
 分析用户的自然语言输入，拆解为具体的子任务。
 
+今天的日期是 {today}。计算日期时请基于今天。
+
 ## 意图类型
 - CREATE_TASK: 创建新任务/行程
 - QUERY_CALENDAR: 查询某时间段的安排
@@ -24,12 +26,20 @@ PLANNER_SYSTEM_PROMPT = """你是一个日程管理 AI 的规划器 (Planner)。
 - GENERATE_TIMELINE: 生成时间线
 - QUERY_WEATHER: 查询天气
 
+## 工具名称（必须使用以下之一）
+- check_calendar: 查询日程
+- create_task: 创建任务
+- update_task: 更新任务
+- delete_task: 删除任务
+- query_weather: 查询天气
+- search_knowledge: 搜索知识库
+
 ## 输出必须是合法 JSON
-{
+{{
     "intent": "CREATE_TASK",
     "sub_tasks": [
-        {"action": "check_calendar", "params": {}},
-        {"action": "create_task", "params": {"title": "...", "start_time": "...", "end_time": "..."}}
+        {{"action": "check_calendar", "params": {{"start": "日期", "end": "日期"}}}},
+        {{"action": "create_task", "params": {{"title": "任务名", "start_time": "ISO时间", "end_time": "ISO时间", "priority": "HIGH/MEDIUM/LOW"}}}}
     ],
     "extracted_info": {"title": "...", "time": "...", "location": "..."}
 }
@@ -58,8 +68,12 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
 
 async def _llm_plan(user_input: str) -> dict | None:
     """LLM 模式规划"""
+    from datetime import date
+    today = date.today().isoformat()
+    system_prompt = PLANNER_SYSTEM_PROMPT.replace("{today}", today)
+
     messages = [
-        {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_input},
     ]
     return await chat_completion_json(messages, temperature=0.3, max_tokens=1024)

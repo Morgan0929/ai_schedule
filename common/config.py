@@ -14,6 +14,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",  # 忽略 .env 中多余字段（如 DATABASE_URL）
     )
 
     # ============ 环境 ============

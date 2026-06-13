@@ -92,19 +92,33 @@ async def chat_completion_json(
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
-        response_format={"type": "json_object"},
+        # DeepSeek may not support response_format; rely on prompt engineering instead
     )
-    content = response.choices[0].message.content
+    content = response.choices[0].message.content.strip()
+
+    # Try direct JSON parse
     try:
         return json.loads(content)
     except json.JSONDecodeError:
-        # 尝试从 markdown code block 中提取
-        if "```json" in content:
-            start = content.index("```json") + 7
-            end = content.index("```", start)
-            content = content[start:end].strip()
+        pass
+
+    # Try extracting from markdown code block
+    for marker in ["```json", "```"]:
+        if marker in content:
             try:
-                return json.loads(content)
-            except Exception:
-                pass
-        return {"raw": content, "parse_error": True}
+                start = content.index(marker) + len(marker)
+                end = content.index("```", start)
+                inner = content[start:end].strip()
+                return json.loads(inner)
+            except (ValueError, json.JSONDecodeError):
+                continue
+
+    # Try finding JSON object in text
+    try:
+        brace_start = content.index("{")
+        brace_end = content.rindex("}") + 1
+        return json.loads(content[brace_start:brace_end])
+    except (ValueError, json.JSONDecodeError):
+        pass
+
+    return {"raw": content, "parse_error": True}
