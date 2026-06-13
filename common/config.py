@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # ============ 环境 ============
     ENV: str = "dev"
     LOG_LEVEL: str = "INFO"
+    USE_SQLITE: bool = True  # 开发时无需 Docker，用 SQLite；上线改为 False
 
     # ============ 数据库 ============
     POSTGRES_HOST: str = "localhost"

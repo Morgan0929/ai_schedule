@@ -40,7 +40,7 @@ class TaskDTO(BaseModel):
     location: str | None = None
     category: TaskCategoryEnum = TaskCategoryEnum.PERSONAL
     tags: list[str] = []
-    metadata: dict[str, Any] = {}
+    extra_data: dict[str, Any] = {}
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
