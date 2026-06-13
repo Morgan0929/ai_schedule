@@ -181,11 +181,20 @@ async def query_flight(user_id: int, origin: str, destination: str,
     return [{"message": "航班查询功能开发中", "origin": origin, "destination": destination}]
 
 
+# ============ 知识库工具 ============
+
+async def search_knowledge(user_id: int, query: str, top_k: int = 3) -> list[dict]:
+    """搜索知识库"""
+    from rag_service.retriever import retriever
+    results = await retriever.search(query, top_k=top_k)
+    return results
+
+
 # ============ 工具注册表 ============
 
 TOOL_MAP = {
     "query_calendar": query_calendar,
-    "check_calendar": query_calendar,  # 别名
+    "check_calendar": query_calendar,
     "create_task": create_task_tool,
     "create_task_tool": create_task_tool,
     "update_task": update_task_tool,
@@ -194,4 +203,5 @@ TOOL_MAP = {
     "delete_task_tool": delete_task_tool,
     "query_weather": query_weather,
     "query_flight": query_flight,
+    "search_knowledge": search_knowledge,
 }
