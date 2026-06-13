@@ -1,185 +1,196 @@
 """
-工具定义 — Agent 可调用的 Function Calling 工具
+工具定义 & 执行器 — Agent Function Calling
 
-Agent 通过调用这些工具来操作日历、查询数据、创建任务等
+所有工具函数对接真实数据库和服务
 """
 from typing import Any
-from datetime import datetime, date
+from datetime import date, datetime, timedelta
+from common.database import async_session_factory, Base, engine
+
+# 确保所有 ORM 模型已注册到 Base.metadata
+import timeline_service.models  # noqa: F401
+import crawler_service.models  # noqa: F401
+import app_service.models     # noqa: F401
 from common.exceptions import NotFoundException
 
 
-# ============ 日历工具 ============
+# ============ 工具执行器 ============
 
-async def query_calendar(user_id: int, start_date: date, end_date: date) -> list[dict[str, Any]]:
+async def execute_tool(tool_name: str, params: dict[str, Any], user_id: int) -> dict[str, Any]:
     """
-    查询用户日历
-
-    Args:
-        user_id: 用户 ID
-        start_date: 开始日期
-        end_date: 结束日期
-
-    Returns:
-        日历事件列表
+    通用工具执行入口
     """
-    # TODO: 从数据库查询
-    return []
+    import inspect
+
+    tool_func = TOOL_MAP.get(tool_name)
+    if not tool_func:
+        return {"success": False, "error": f"未知工具: {tool_name}"}
+
+    # 过滤出函数真正接受的参数，避免 TypeError
+    sig = inspect.signature(tool_func)
+    valid_params = {"user_id": user_id}
+    for k, v in params.items():
+        if k in sig.parameters:
+            valid_params[k] = v
+
+    try:
+        result = await tool_func(**valid_params)
+        return {"success": True, "tool": tool_name, "result": result}
+    except Exception as e:
+        return {"success": False, "tool": tool_name, "error": str(e)}
 
 
-async def create_task_tool(user_id: int, title: str, start_time: datetime,
-                           end_time: datetime, priority: str = "MEDIUM",
-                           location: str = None, category: str = "PERSONAL") -> dict[str, Any]:
-    """
-    创建新任务
+# ============ 日历查询 ============
 
-    Args:
-        user_id: 用户 ID
-        title: 任务标题
-        start_time: 开始时间
-        end_time: 结束时间
-        priority: 优先级 HIGH/MEDIUM/LOW
-        location: 地点
-        category: 分类 MEETING/TRIP/PERSONAL/WORK
+async def query_calendar(user_id: int, start: str = None, end: str = None,
+                         start_date: str = None, end_date: str = None) -> list[dict]:
+    """查询用户日历"""
+    from timeline_service.repository.task_repo import TaskRepository
 
-    Returns:
-        创建的任务
-    """
-    # TODO: 写入数据库
-    task = {
-        "id": 0,
-        "user_id": user_id,
-        "title": title,
-        "start_time": start_time.isoformat(),
-        "end_time": end_time.isoformat(),
-        "priority": priority,
-        "location": location,
-        "category": category,
-    }
-    return task
+    # 兼容两种参数名
+    s = start or start_date or date.today().isoformat()
+    e = end or end_date or date.today().isoformat()
 
+    try:
+        start_dt = datetime.fromisoformat(s) if "T" not in s else datetime.fromisoformat(s)
+        end_dt = datetime.fromisoformat(e) if "T" not in e else datetime.fromisoformat(e)
+    except ValueError:
+        start_dt = datetime.combine(date.today(), datetime.min.time())
+        end_dt = datetime.combine(date.today(), datetime.max.time())
 
-async def update_task_tool(task_id: int, **kwargs) -> dict[str, Any]:
-    """
-    更新任务
-
-    Args:
-        task_id: 任务 ID
-        **kwargs: 要更新的字段
-
-    Returns:
-        更新后的任务
-    """
-    # TODO: 更新数据库
-    return {"id": task_id, **kwargs}
+    async with async_session_factory() as db:
+        repo = TaskRepository(db)
+        tasks = await repo.find_by_user_time_range(user_id, start_dt, end_dt)
+        return [
+            {
+                "id": t.id, "title": t.title, "start_time": t.start_time.isoformat(),
+                "end_time": t.end_time.isoformat(), "priority": t.priority,
+                "location": t.location, "category": t.category,
+            }
+            for t in tasks
+        ]
 
 
-async def delete_task_tool(task_id: int) -> bool:
+# ============ 任务 CRUD ============
+
+async def create_task_tool(user_id: int, title: str, start_time: str = None,
+                           end_time: str = None, start: str = None, end: str = None,
+                           priority: str = "MEDIUM", location: str = None,
+                           category: str = "PERSONAL") -> dict:
+    """创建任务（含冲突检测），兼容 start/end 和 start_time/end_time"""
+    from common.models.task import TaskCreateDTO, PriorityEnum, TaskCategoryEnum
+    from timeline_service.service.task_service import TaskService
+
+    # 参数名兼容
+    st = start_time or start
+    et = end_time or end
+
+    # 如果没有给时间，用默认值
+    if not st:
+        st = (datetime.now() + timedelta(hours=1)).isoformat()
+    if not et:
+        et = (datetime.now() + timedelta(hours=2)).isoformat()
+
+    # 日期补全时间
+    st = _normalize_datetime(st)
+    et = _normalize_datetime(et, is_end=True, reference_start=st)
+
+    dto = TaskCreateDTO(
+        title=title,
+        start_time=datetime.fromisoformat(st),
+        end_time=datetime.fromisoformat(et),
+        priority=PriorityEnum(priority),
+        location=location,
+        category=TaskCategoryEnum(category),
+    )
+
+    async with async_session_factory() as db:
+        service = TaskService(db)
+        try:
+            task = await service.create_task(dto, user_id)
+            await db.commit()
+            return {"id": task.id, "title": task.title, "status": "created"}
+        except Exception as e:
+            await db.rollback()
+            return {"error": str(e), "status": "conflict_or_error"}
+
+
+def _normalize_datetime(dt_str: str, is_end: bool = False, reference_start: str = None) -> str:
+    """规范化时间字符串：纯日期补上默认时间。end 自动设为 start+1h"""
+    from datetime import timedelta
+    from datetime import datetime as dt_cls
+    if not dt_str:
+        return (dt_cls.now() + timedelta(hours=1)).isoformat()
+    # 如果只是日期（不含 T）
+    if "T" not in dt_str:
+        if is_end and reference_start and "T" in reference_start:
+            # end 日期和 start 相同但没时间 → 设为 start+1h
+            ref_dt = dt_cls.fromisoformat(reference_start)
+            return (ref_dt + timedelta(hours=1)).isoformat()
+        return f"{dt_str}T{'10:00:00' if is_end else '09:00:00'}"
+    return dt_str
+
+
+async def update_task_tool(user_id: int, task_id: int, **kwargs) -> dict:
+    """更新任务"""
+    from common.models.task import TaskUpdateDTO
+    from timeline_service.service.task_service import TaskService
+
+    # 转换枚举值
+    if "priority" in kwargs and isinstance(kwargs["priority"], str):
+        from common.models.task import PriorityEnum
+        kwargs["priority"] = PriorityEnum(kwargs["priority"])
+
+    dto = TaskUpdateDTO(**{k: v for k, v in kwargs.items() if v is not None})
+
+    async with async_session_factory() as db:
+        service = TaskService(db)
+        task = await service.update_task(task_id, dto)
+        await db.commit()
+        return {"id": task.id, "title": task.title, "status": "updated"}
+
+
+async def delete_task_tool(user_id: int, task_id: int) -> dict:
     """删除任务"""
-    # TODO: 删除数据库记录
-    return True
+    from timeline_service.service.task_service import TaskService
+
+    async with async_session_factory() as db:
+        service = TaskService(db)
+        await service.delete_task(task_id)
+        await db.commit()
+        return {"task_id": task_id, "status": "deleted"}
 
 
 # ============ 外部数据工具 ============
 
-async def query_weather(city: str, target_date: date = None) -> dict[str, Any]:
-    """
-    查询天气
+async def query_weather(user_id: int, city: str = "北京", target_date: str = None) -> dict:
+    """查询天气（从爬虫数据获取）"""
+    from crawler_service.service.crawl_service import CrawlService
 
-    Args:
-        city: 城市名
-        target_date: 目标日期
-
-    Returns:
-        天气信息
-    """
-    # TODO: 接入天气 API 或爬虫数据
-    return {"city": city, "date": str(target_date), "weather": "待实现"}
+    async with async_session_factory() as db:
+        service = CrawlService(db)
+        record = await service.get_latest("weather")
+        if record and record.raw_data:
+            return {"city": city, "source": "cached", "data": record.raw_data}
+        return {"city": city, "source": "not_available", "message": "暂无天气数据，请先触发爬取"}
 
 
-async def query_flight(origin: str, destination: str, date: date) -> list[dict[str, Any]]:
-    """
-    查询航班
-
-    Args:
-        origin: 出发城市
-        destination: 到达城市
-        date: 日期
-
-    Returns:
-        航班列表
-    """
-    # TODO: 接入航班 API 或爬虫数据
-    return []
+async def query_flight(user_id: int, origin: str, destination: str,
+                       flight_date: str = None) -> list[dict]:
+    """查询航班（预留）"""
+    return [{"message": "航班查询功能开发中", "origin": origin, "destination": destination}]
 
 
 # ============ 工具注册表 ============
 
-# 工具定义（用于 LangChain/LangGraph Function Calling）
-TOOL_DEFINITIONS = [
-    {
-        "name": "query_calendar",
-        "description": "查询用户指定时间范围内的日程安排",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "user_id": {"type": "integer", "description": "用户 ID"},
-                "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD"},
-                "end_date": {"type": "string", "description": "结束日期 YYYY-MM-DD"},
-            },
-            "required": ["user_id", "start_date", "end_date"],
-        },
-    },
-    {
-        "name": "create_task_tool",
-        "description": "创建一个新的任务/行程",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "user_id": {"type": "integer"},
-                "title": {"type": "string", "description": "任务标题"},
-                "start_time": {"type": "string", "description": "开始时间 ISO 格式"},
-                "end_time": {"type": "string", "description": "结束时间 ISO 格式"},
-                "priority": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
-                "location": {"type": "string"},
-                "category": {"type": "string", "enum": ["MEETING", "TRIP", "PERSONAL", "WORK"]},
-            },
-            "required": ["user_id", "title", "start_time", "end_time"],
-        },
-    },
-    {
-        "name": "update_task_tool",
-        "description": "更新已有任务",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "integer"},
-                "title": {"type": "string"},
-                "start_time": {"type": "string"},
-                "end_time": {"type": "string"},
-                "priority": {"type": "string"},
-            },
-            "required": ["task_id"],
-        },
-    },
-    {
-        "name": "query_weather",
-        "description": "查询指定城市的天气",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "city": {"type": "string", "description": "城市名"},
-                "target_date": {"type": "string", "description": "日期 YYYY-MM-DD"},
-            },
-            "required": ["city"],
-        },
-    },
-]
-
-# 工具名称到函数的映射
 TOOL_MAP = {
     "query_calendar": query_calendar,
+    "check_calendar": query_calendar,  # 别名
+    "create_task": create_task_tool,
     "create_task_tool": create_task_tool,
+    "update_task": update_task_tool,
     "update_task_tool": update_task_tool,
+    "delete_task": delete_task_tool,
     "delete_task_tool": delete_task_tool,
     "query_weather": query_weather,
     "query_flight": query_flight,

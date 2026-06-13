@@ -1,0 +1,90 @@
+"""
+Agent 编排服务 — 核心对话入口
+
+接收用户自然语言 → LangGraph 工作流 → 返回结构化响应
+"""
+import uuid
+import logging
+from typing import Any
+from common.models.agent import AgentChatRequest, AgentChatResponse, AgentSuggestion
+from agent_service.graph.graph import get_agent_graph
+from agent_service.graph.state import AgentState
+from agent_service.llm.deepseek_client import is_llm_available
+
+logger = logging.getLogger(__name__)
+
+
+class AgentService:
+    """AI Agent 主服务"""
+
+    @staticmethod
+    async def chat(request: AgentChatRequest) -> AgentChatResponse:
+        """
+        处理一次 Agent 对话
+
+        完整工作流:
+        1. Planner 解析意图
+        2. Tools 执行操作 (查询日历/创建任务/查天气)
+        3. Conflict 冲突检测
+        4. Coordinator 协调决策
+        5. Reply 生成回复
+        """
+        session_id = request.session_id or str(uuid.uuid4())[:8]
+
+        # 构建初始状态
+        initial_state: AgentState = {
+            "messages": [],
+            "user_input": request.message,
+            "user_id": request.user_id or 0,
+            "session_id": session_id,
+            "intent": "",
+            "sub_tasks": [],
+            "calendar_events": [],
+            "external_data": {},
+            "conflicts_found": [],
+            "conflict_count": 0,
+            "suggestions": [],
+            "recommended_plan": "",
+            "final_reply": "",
+            "actions_taken": [],
+            "tasks_created": [],
+            "tasks_updated": [],
+            "error": None,
+        }
+
+        try:
+            # 执行 LangGraph 工作流
+            graph = get_agent_graph()
+            final_state = await graph.ainvoke(initial_state)
+
+            # 构建响应
+            suggestions = []
+            for s in final_state.get("suggestions", []):
+                suggestions.append(AgentSuggestion(
+                    plan_id=s.get("plan_id", "?"),
+                    title=s.get("title", ""),
+                    description=s.get("description", ""),
+                    impact=s.get("impact", ""),
+                    is_recommended=s.get("is_recommended", False),
+                ))
+
+            reply = final_state.get("final_reply", "")
+            if not is_llm_available() and "mock" not in reply.lower():
+                reply += "\n\n💡 提示：配置 DeepSeek API Key 后可使用完整 AI 能力。"
+
+            return AgentChatResponse(
+                reply=reply,
+                session_id=session_id,
+                conflicts=final_state.get("conflicts_found", []),
+                suggestions=suggestions,
+                tasks_created=final_state.get("tasks_created", []),
+                tasks_updated=final_state.get("tasks_updated", []),
+                actions_taken=final_state.get("actions_taken", []),
+            )
+
+        except Exception as e:
+            logger.exception(f"Agent chat error: {e}")
+            return AgentChatResponse(
+                reply=f"抱歉，处理您的请求时遇到了问题：{e}\n\n请稍后重试或换一种方式描述。",
+                session_id=session_id,
+            )

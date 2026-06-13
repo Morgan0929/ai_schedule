@@ -1,29 +1,47 @@
 """
-agent-service 入口 — AI Agent 核心 (LangGraph + DeepSeek)
+agent_service 入口 — AI Agent 核心 (LangGraph + DeepSeek)
 端口 8002
 """
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
 from common.config import settings
+from common.database import init_db
 from common.exceptions import AppException
 from common.models.response import Result
 from common.models.agent import AgentChatRequest, AgentChatResponse
 
+# 确保所有 ORM 模型在 init_db() 前导入
+import timeline_service.models  # noqa: F401
+import crawler_service.models  # noqa: F401
+import app_service.models     # noqa: F401
+
+from agent_service.service.agent_service import AgentService
+from agent_service.llm.deepseek_client import is_llm_available
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """应用生命周期"""
+    await init_db()
+    mode = "LLM (DeepSeek)" if is_llm_available() else "Mock (规则引擎)"
+    logger.info(f"Agent service started — 模式: {mode}")
     yield
 
 
 app = FastAPI(
     title="AI Schedule Agent — Agent Service",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -44,9 +62,23 @@ async def app_exception_handler(request: Request, exc: AppException):
     )
 
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled exception")
+    return JSONResponse(
+        status_code=500,
+        content=Result.error(500, str(exc)).model_dump(),
+    )
+
+
+# ============ 健康检查 ============
 @app.get("/health", response_model=Result)
 async def health_check():
-    return Result.success({"status": "ok", "service": "agent-service"})
+    return Result.success({
+        "status": "ok",
+        "service": "agent-service",
+        "mode": "llm" if is_llm_available() else "mock",
+    })
 
 
 # ============ Agent 对话 API（核心） ============
@@ -55,18 +87,34 @@ async def agent_chat(request: AgentChatRequest):
     """
     Agent 对话入口
 
-    工作流：
-    1. Planner — 分析意图，拆解子任务
-    2. Tools — 查询日历/客户安排/天气/航班
-    3. ConflictDetector — 检查时间冲突
-    4. Coordinator — AI 协调生成多方案
-    5. Reply — 格式化回复
+    支持的自然语言示例：
+    - 「查看我明天的安排」
+    - 「帮我安排周五下午 3 点的产品评审」
+    - 「检查下周有没有冲突」
+    - 「下周去上海出差」
+    - 「生成明天的时间线」
+
+    工作流: Planner → Tools → Conflict → Coordinator → Reply
     """
-    # TODO: 接入 LangGraph 编排
-    return Result.success(AgentChatResponse(
-        reply=f"收到您的消息：{request.message}\n\nAgent 核心功能正在开发中...",
-        session_id=request.session_id or "new-session",
-    ).model_dump())
+    response = await AgentService.chat(request)
+    return Result.success(response.model_dump())
+
+
+@app.get("/api/v1/agent/mode", response_model=Result)
+async def get_mode():
+    """获取当前 Agent 运行模式"""
+    return Result.success({
+        "mode": "llm" if is_llm_available() else "mock",
+        "model": settings.DEEPSEEK_MODEL if is_llm_available() else "rule-engine",
+        "features": {
+            "intent_recognition": True,
+            "task_crud": True,
+            "conflict_detection": True,
+            "coordination": "llm" if is_llm_available() else "template",
+            "weather_query": True,
+            "natural_language_understanding": is_llm_available(),
+        },
+    })
 
 
 if __name__ == "__main__":
