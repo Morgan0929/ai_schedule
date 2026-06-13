@@ -1,0 +1,514 @@
+# AI Schedule Agent（日程智能助手）— 项目蓝图
+
+> 本文档为 AI 助手的核心上下文文件，每次回答前必须阅读。包含完整的数据栈、架构、目标、框架定义。
+
+---
+
+## 一、项目概述
+
+**项目名称**：AI Schedule Agent（日程智能助手）  
+**项目根目录**：`D:/AIagent日程规划/`  
+**代码仓库**：Gitee（待创建）  
+**项目类型**：Python AI Agent + 日程管理系统 + 数据采集平台 + 移动端应用
+
+### 核心业务场景
+本项目是一个 **AI Agent 日程管理系统**，核心特点是 **AI 自动感知冲突、协调决策、管理时间线**，而非简单的 CRUD 日历应用。
+
+### 核心能力
+| 能力 | 描述 |
+|------|------|
+| 爬虫获取外部数据 | 自动采集会议、航班、天气等外部信息 |
+| 自动生成时间线 | 将零散任务整理为可视化时间线 |
+| AI 对话管理行程 | 自然语言交互，Agent 理解意图并操作日程 |
+| AI 冲突检测 | 多任务时间重叠自动发现 |
+| AI 协调决策 | 冲突时给出多方案，用户选择或 AI 自动决策 |
+| 手机 APP 使用 | Flutter 跨平台移动端 |
+
+### 典型交互场景
+
+```
+用户：下周帮我安排上海出差
+
+AI：已发现：
+    1. 3月10日 北京客户会议
+    2. 3月11日 上海出差
+    3. 3月12日 产品发布会
+
+存在冲突：
+    上海出差与产品发布会时间重叠
+
+解决方案：
+    方案A：提前一天飞上海
+    方案B：线上参加发布会
+    方案C：委托张三代为出席
+```
+
+---
+
+## 二、数据栈 (Data Stack)
+
+| 层级 | 技术 | 用途 |
+|------|------|------|
+| 语言 | Python 3.11+ | 后端核心语言（从 Java 转型） |
+| 后端框架 | FastAPI | 类似 Spring Boot，类型注解完整，AI 生态最好 |
+| 数据验证 | Pydantic v2 | 请求/响应模型验证，类似 Java Bean Validation |
+| ORM | SQLAlchemy 2.0 | 异步数据库操作 |
+| 关系数据库 | PostgreSQL 16 | 用户、行程、时间线、AI 日志、Agent 状态、爬虫数据 |
+| 缓存/队列 | Redis 7.x | 缓存、会话、任务队列、消息队列 |
+| 向量数据库 | Qdrant | RAG 知识库（比 Milvus 简单） |
+| 嵌入模型 | BGE-M3 | 中文嵌入向量生成 |
+| LLM | DeepSeek V4 / DeepSeek R1 | 成本低、中文强、API 便宜 |
+| Agent 框架 | LangGraph | 任务编排、状态图、工具调用（最值得学） |
+| 爬虫 | requests + BeautifulSoup4 → Playwright | 第一阶段简单爬取，第二阶段动态渲染 |
+| 定时任务 | APScheduler | 定时自动采集数据 |
+| 语音 | Whisper（输入） + CosyVoice（输出） | 后期升级语音交互 |
+| 移动端 | Flutter | 一套代码 Android + iOS |
+| 容器化 | Docker + Docker Compose | 全部容器化部署 |
+| 反向代理 | Nginx | 生产环境前端 |
+
+---
+
+## 三、架构 (Architecture)
+
+### 3.1 微服务拆分（企业级标准）
+
+```
+D:/AIagent日程规划/
+├── CLAUDE.md                      # ← 本文件（项目核心上下文）
+├── README.md                      # 项目说明 + 快速启动
+├── .env.example                   # 环境变量模板
+├── .gitignore
+├── docker-compose.yml             # PostgreSQL + Redis + Qdrant
+├── venv/                          # Python 3.12 虚拟环境
+│
+├── common/                        # 公共模块
+│   ├── config.py                  # pydantic-settings 全局配置
+│   ├── database.py                # SQLAlchemy 2.0 async 引擎
+│   ├── redis_client.py            # Redis 异步客户端
+│   ├── exceptions.py              # 6 种业务异常
+│   └── models/                    # 7 个 Pydantic 模型
+│       ├── response.py            # Result<T> / PageResult<T>
+│       ├── user.py                # UserDTO / Login / Create
+│       ├── task.py                # TaskDTO / 优先级枚举
+│       ├── timeline.py            # TimelineEvent / TimelineDTO
+│       ├── conflict.py            # ConflictDTO / Severity
+│       └── agent.py               # AgentChatRequest / Response
+│
+├── app_service/       端口 8000   # API 网关 & 用户认证
+│   ├── main.py                    # FastAPI + sys.path 修正
+│   ├── auth/jwt.py                # JWT 生成/解析
+│   └── requirements.txt
+│
+├── agent_service/     端口 8002   # AI Agent 核心
+│   ├── main.py                    # /api/v1/agent/chat
+│   ├── coordinator.py             # AI 协调决策引擎
+│   ├── graph/
+│   │   ├── state.py               # AgentState (LangGraph)
+│   │   ├── planner.py             # Planner 节点
+│   │   └── tools.py               # 6 个 Function Calling 工具
+│   ├── llm/
+│   │   ├── deepseek_client.py     # DeepSeek 异步客户端
+│   │   └── prompts.py             # 3 套系统提示词
+│   └── requirements.txt
+│
+├── timeline_service/  端口 8003   # 时间线 & 冲突检测
+│   ├── main.py                    # 时间线 + 冲突 API
+│   ├── engine.py                  # TimelineEngine
+│   ├── conflict_detector.py       # 4 条冲突检测规则
+│   ├── models.py                  # SQLAlchemy ORM 实体
+│   └── requirements.txt
+│
+├── crawler_service/   端口 8001   # 数据采集
+│   ├── main.py                    # APScheduler 生命周期
+│   ├── scheduler.py               # AsyncIOScheduler
+│   ├── spiders/                   # 爬虫脚本挂载点
+│   └── requirements.txt
+│
+├── rag_service/       端口 8004   # RAG 知识库
+│   ├── main.py                    # 文档上传/搜索 API
+│   ├── embeddings.py              # BGE-M3 嵌入 (1024维)
+│   ├── vector_store.py            # Qdrant 客户端
+│   ├── retriever.py               # 检索器
+│   └── requirements.txt
+│
+├── scripts/init-db.sql            # 8 张表完整建表脚本
+├── docs/api-spec.md               # API 接口文档
+└── tests/                         # 测试目录（待添加）
+```
+
+> **注意**：服务目录使用下划线（`app_service`）而非连字符，因为 Python 无法从含连字符的目录 import 包。
+> 每个 `main.py` 顶部包含 `sys.path.insert(0, str(Path(__file__).parent.parent))` 以从任意目录启动。
+
+### 3.2 微服务架构图
+
+```
+                    ┌──────────────────┐
+                    │   Flutter App     │
+                    │  (Android/iOS)    │
+                    └────────┬─────────┘
+                             │
+                    ┌────────▼─────────┐
+                    │  Nginx (反向代理)  │
+                    └────────┬─────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              │              │              │
+    ┌─────────▼────┐  ┌─────▼──────┐  ┌───▼──────────┐
+    │ app-service  │  │agent-service│  │timeline-svc   │
+    │ (API 网关)    │  │ (AI 核心)   │  │ (时间线引擎)   │
+    │ Port: 8000   │  │ Port: 8002  │  │ Port: 8003    │
+    └──────┬───────┘  └─────┬───────┘  └──────┬────────┘
+           │                │                  │
+    ┌──────▼───────┐  ┌─────▼───────┐  ┌──────▼────────┐
+    │ rag-service  │  │crawler-svc  │  │  共享基础设施   │
+    │ (知识库)      │  │ (数据采集)   │  │                │
+    │ Port: 8004   │  │ Port: 8001  │  │ PostgreSQL 16  │
+    └──────────────┘  └─────────────┘  │ Redis 7        │
+                                       │ Qdrant         │
+                                       └────────────────┘
+```
+
+### 3.3 分层架构（以 agent-service 为例）
+
+```
+┌──────────────────────────────────────────┐
+│            FastAPI Router 层             │  ← REST API 入口
+├──────────────────────────────────────────┤
+│            LangGraph StateGraph          │  ← Agent 编排引擎
+├──────────────────────────────────────────┤
+│         Tools / Function Calling         │  ← 工具调用层
+├──────────────────────────────────────────┤
+│            LLM Client 层                 │  ← DeepSeek API 封装
+├──────────────────────────────────────────┤
+│         Repository / Model 层            │  ← 数据访问 (SQLAlchemy)
+├──────────────────────────────────────────┤
+│         Infrastructure 层                │  ← Redis、Qdrant、外部服务调用
+└──────────────────────────────────────────┘
+```
+
+### 3.4 Agent 工作流（LangGraph 状态图）
+
+```
+用户输入
+    │
+    ▼
+┌──────────┐
+│ Planner  │  ← 分析意图，拆解任务
+└────┬─────┘
+     │
+     ▼
+┌──────────────┐
+│ 调用工具      │  ← 查询日历 / 查客户安排 / 查天气 / 查航班
+│ (N 个并行)    │
+└────┬─────────┘
+     │
+     ▼
+┌──────────────┐
+│ 冲突检测      │  ← if task1.end > task2.start → 冲突
+└────┬─────────┘
+     │
+     ▼
+┌──────────────┐
+│ AI 协调决策   │  ← 生成多方案 + 推荐最佳
+└────┬─────────┘
+     │
+     ▼
+┌──────────────┐
+│ 生成回复      │  ← 格式化输出给用户
+└──────────────┘
+```
+
+---
+
+## 四、目标 (Goals)
+
+### 4.1 总体目标
+构建一个接近真实 AI Agent 产品架构的项目，覆盖 **数据采集 → 时间线管理 → AI 冲突检测 → AI 协调决策 → 移动端交互** 的全链路，作为从资深 Java 后端转型 AI 应用开发的作品集项目。
+
+### 4.2 阶段目标
+
+| 阶段 | 周期 | 目标 | 产出 |
+|------|------|------|------|
+| **Phase 1** | 2 周 | Python 基础 + FastAPI | 项目骨架、Pydantic 模型、SQLAlchemy 配置 |
+| **Phase 2** | 3 周 | 数据库搭建 | PostgreSQL 建表、Redis 集成、基础 CRUD |
+| **Phase 3** | 3 周 | 爬虫服务 | BeautifulSoup → Playwright、APScheduler 定时采集 |
+| **Phase 4** | 4 周 | AI Agent 核心 | DeepSeek 接入、LangGraph 编排、Function Calling、冲突检测引擎 |
+| **Phase 5** | 2 周 | RAG 知识库 | Qdrant 部署、BGE-M3 嵌入、文档检索 |
+| **Phase 6** | 2 周 | Flutter APP | 移动端完成、端到端联调 |
+| **Phase 7** | — | 部署上线 | Docker 容器化、Nginx 配置、CI/CD |
+
+### 4.3 当前焦点 → Phase 1
+先完成**项目骨架搭建**：
+- Python 环境配置
+- FastAPI 项目初始化
+- 多服务目录结构
+- 公共模块（Pydantic 模型、异常、配置）
+- PostgreSQL + Redis + Qdrant Docker 环境
+
+---
+
+## 五、框架 (Framework)
+
+### 5.1 后端框架
+
+```txt
+# FastAPI 核心
+fastapi==0.115.*
+uvicorn[standard]==0.34.*
+pydantic==2.*
+pydantic-settings==2.*
+
+# 数据库
+sqlalchemy[asyncio]==2.0.*
+asyncpg==0.30.*           # PostgreSQL 异步驱动
+alembic==1.14.*           # 数据库迁移
+
+# Redis
+redis==5.2.*
+hiredis==2.*              # Redis 高性能解析器
+
+# 向量数据库
+qdrant-client==1.12.*
+
+# LLM / Agent
+langgraph==0.2.*
+langchain==0.3.*
+openai==1.*               # DeepSeek 兼容 OpenAI SDK
+
+# 爬虫
+requests==2.32.*
+beautifulsoup4==4.12.*
+playwright==1.50.*
+
+# 定时任务
+apscheduler==3.10.*
+
+# 工具
+httpx==0.28.*             # 异步 HTTP 客户端（服务间调用）
+python-jose[cryptography]==3.3.*  # JWT 认证
+```
+
+### 5.2 编码规范
+- 包名：`ai_schedule_agent.*` 各服务内
+- 统一返回格式：`{"code": 200, "message": "success", "data": {...}}`
+- 异常处理：FastAPI `exception_handler` 全局异常处理
+- 日志：Python `logging` + `structlog`（结构化日志）
+- 配置：`pydantic-settings` 多环境（dev / prod）
+- 类型注解：所有函数必须标注参数和返回值类型
+- 异步优先：FastAPI 路由和数据库操作一律 `async/await`
+
+### 5.3 API 风格对比（Java → Python）
+
+```java
+// Java Spring Boot
+@PostMapping("/task")
+public Result createTask(@RequestBody TaskDTO dto) {
+    return Result.success(taskService.createTask(dto));
+}
+```
+
+```python
+# Python FastAPI
+@router.post("/task")
+async def create_task(dto: TaskCreateDTO) -> Result[TaskDTO]:
+    task = await task_service.create_task(dto)
+    return Result.success(task)
+```
+
+---
+
+## 六、核心业务模型
+
+### 6.1 实体关系
+
+```
+User (用户)
+  ├── id, username, email, password_hash
+  ├── role (ADMIN/USER)
+  │
+  ├── 1 : N → Task (任务/行程)
+  │     ├── id, user_id, title, description
+  │     ├── start_time, end_time
+  │     ├── priority (HIGH/MEDIUM/LOW)
+  │     ├── status (PENDING/IN_PROGRESS/COMPLETED/CANCELLED)
+  │     ├── location (地点)
+  │     ├── category (MEETING/TRIP/PERSONAL/WORK)
+  │     └── created_at, updated_at
+  │
+  ├── 1 : N → Timeline (时间线)
+  │     ├── id, user_id, date
+  │     ├── events: JSON[]  (排序后的事件列表)
+  │     └── generated_by: AI/MANUAL
+  │
+  ├── 1 : N → Conflict (冲突)
+  │     ├── id, user_id
+  │     ├── task_a_id, task_b_id
+  │     ├── overlap_start, overlap_end
+  │     ├── severity (CRITICAL/WARNING/INFO)
+  │     ├── resolution (建议方案)
+  │     └── resolved: bool
+  │
+  ├── 1 : N → AgentSession (Agent 会话)
+  │     ├── id, user_id
+  │     ├── messages: JSON[]
+  │     ├── state: JSON (LangGraph 状态)
+  │     └── created_at
+  │
+  └── 1 : N → CrawlData (爬虫数据)
+        ├── id, user_id
+        ├── source (航班/天气/新闻)
+        ├── raw_data: JSON
+        └── created_at
+```
+
+### 6.2 冲突检测规则
+
+| 规则 | 描述 |
+|------|------|
+| **时间重叠** | `task_a.end_time > task_b.start_time` → 冲突 |
+| **优先级排序** | HIGH > MEDIUM > LOW，低优先级让位高优先级 |
+| **地点冲突** | 同一时间段不同地点 → 物理不可达（需要交通时间） |
+| **缓冲时间** | 相邻任务之间至少 15 分钟缓冲 |
+| **AI 决策权重** | 优先级(40%) + 历史习惯(30%) + 参与人数(20%) + 可调整性(10%) |
+
+### 6.3 AI 协调决策模型
+
+```
+输入：冲突列表 + 用户偏好 + 历史数据
+  ↓
+AI 分析维度：
+  1. 任务重要性（能否延期？能否委托？能否取消？）
+  2. 参与者影响（多少人受影响？是否有外部客户？）
+  3. 时间敏感性（截止日期、不可变更性）
+  4. 用户历史选择偏好
+  ↓
+输出：
+  方案A（推荐）：具体调整方案 + 影响分析
+  方案B：备选方案 + 影响分析
+  方案C：兜底方案 + 影响分析
+```
+
+### 6.4 时间线数据结构
+
+```json
+{
+  "date": "2026-03-11",
+  "events": [
+    {
+      "time": "09:00",
+      "duration": 120,
+      "event": "客户会议",
+      "category": "MEETING",
+      "location": "北京办公室",
+      "priority": "HIGH"
+    },
+    {
+      "time": "13:00",
+      "duration": 180,
+      "event": "飞往上海",
+      "category": "TRIP",
+      "location": "首都机场→虹桥机场"
+    },
+    {
+      "time": "18:00",
+      "duration": 90,
+      "event": "晚餐",
+      "category": "PERSONAL",
+      "location": "上海外滩"
+    }
+  ]
+}
+```
+
+---
+
+## 七、API 设计（初版）
+
+### 7.1 Agent 对话 API
+
+```
+POST /api/v1/agent/chat
+  Request:  { "message": "帮我安排下周上海出差", "session_id": "uuid" }
+  Response: { "reply": "...", "conflicts": [...], "suggestions": [...] }
+```
+
+### 7.2 时间线 API
+
+```
+GET    /api/v1/timeline?date=2026-03-11
+POST   /api/v1/timeline/generate   ← AI 自动生成
+PUT    /api/v1/timeline/{id}
+```
+
+### 7.3 任务 CRUD API
+
+```
+GET    /api/v1/tasks?start=...&end=...
+POST   /api/v1/tasks
+PUT    /api/v1/tasks/{id}
+DELETE /api/v1/tasks/{id}
+```
+
+### 7.4 冲突检测 API
+
+```
+GET    /api/v1/conflicts?start=...&end=...
+POST   /api/v1/conflicts/resolve/{id}  ← AI 协调解决
+```
+
+---
+
+## 八、开发工具配置
+
+| 工具 | 用途 |
+|------|------|
+| VSCode | 代码编辑器 |
+| Claude Code | AI 辅助编码 |
+| DeepSeek V4 | 方案设计 + 模型调用 |
+| GitHub Copilot | 代码补全 |
+
+---
+
+## 九、部署架构
+
+```
+docker-compose.yml
+├── nginx (80:80)
+├── app-service (8000)
+├── crawler-service (8001)
+├── agent-service (8002)
+├── timeline-service (8003)
+├── rag-service (8004)
+├── postgres (5432)
+├── redis (6379)
+└── qdrant (6333)
+```
+
+---
+
+## 十、与电商平台项目的差异
+
+| 维度 | 电商平台 | AI Schedule Agent |
+|------|----------|-------------------|
+| 语言 | Java / Spring Boot | Python / FastAPI |
+| 核心 | CRUD + 业务规则 | AI Agent + 智能决策 |
+| ORM | MyBatis-Plus | SQLAlchemy 2.0 async |
+| 数据库 | MySQL 8.0 | PostgreSQL 16 |
+| 向量数据库 | 无 | Qdrant |
+| Agent 框架 | 无 | LangGraph |
+| 爬虫 | 无 | BeautifulSoup4 + Playwright |
+| 移动端 | Electron 桌面端 | Flutter 移动端 |
+| 知识库 | 无 | RAG + BGE-M3 |
+
+---
+
+## 十一、文档维护说明
+
+> **重要**：本文件是项目的「大脑」，所有核心决策和架构信息在此维护。
+> 每次修改项目结构、新增服务、调整业务规则后，必须同步更新本文件。
+> AI 助手的第一个动作始终是阅读本文件，确保上下文一致。
+
+---
+
+*创建日期：2026-06-13*
+*维护者：Claude AI Assistant & 项目负责人*
