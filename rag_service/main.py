@@ -14,10 +14,10 @@ from fastapi.responses import JSONResponse
 
 from common.config import settings
 from common.exceptions import AppException
-from common.models.response import Result
+from common.schemas.response import Result
 
-from rag_service.models import DocumentUploadRequest, DocumentSearchRequest
-from rag_service.service.rag_service import RagService
+from rag_service.models.rag_model import DocumentUploadRequest, DocumentSearchRequest
+from rag_service.services.rag_service import RagService
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

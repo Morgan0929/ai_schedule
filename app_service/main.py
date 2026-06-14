@@ -15,10 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from common.config import settings
 from common.database import get_db, init_db
 from common.exceptions import AppException, UnauthorizedException
-from common.models.response import Result, PageResult
-from common.models.user import UserCreateDTO, UserLoginDTO
+from common.schemas.response import Result, PageResult
+from common.schemas.user import UserCreateDTO, UserLoginDTO
 
-from app_service.service.user_service import UserService
+from app_service.services.user_service import UserService
 
 
 @asynccontextmanager
@@ -26,8 +26,8 @@ async def lifespan(app: FastAPI):
     """应用生命周期：启动时建表，关闭时释放资源"""
     await init_db()
     # 创建默认 admin 账号
-    from app_service.models import UserModel
-    from app_service.auth.password import hash_password
+    from app_service.models.user_model import UserModel
+    from common.utils.password import hash_password
     from common.database import async_session_factory
     async with async_session_factory() as db:
         from app_service.repository.user_repo import UserRepository

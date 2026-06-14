@@ -3,7 +3,7 @@
 """
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app_service.models import UserModel
+from app_service.models.user_model import UserModel
 
 
 class UserRepository:

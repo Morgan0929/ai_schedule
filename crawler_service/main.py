@@ -16,11 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from common.config import settings
 from common.database import get_db, init_db
 from common.exceptions import AppException
-from common.models.response import Result, PageResult
+from common.schemas.response import Result, PageResult
 
-from crawler_service.models import CrawlTriggerRequest
-from crawler_service.service.crawl_service import CrawlService
-from crawler_service.scheduler import start_scheduler, stop_scheduler
+from crawler_service.models.crawl_model import CrawlTriggerRequest
+from crawler_service.services.crawl_service import CrawlService
+from crawler_service.utils.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

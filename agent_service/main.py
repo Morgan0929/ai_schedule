@@ -15,15 +15,15 @@ from fastapi.responses import JSONResponse
 from common.config import settings
 from common.database import init_db
 from common.exceptions import AppException
-from common.models.response import Result
-from common.models.agent import AgentChatRequest, AgentChatResponse
+from common.schemas.response import Result
+from common.schemas.agent import AgentChatRequest, AgentChatResponse
 
 # 确保所有 ORM 模型在 init_db() 前导入
-import timeline_service.models  # noqa: F401
-import crawler_service.models  # noqa: F401
-import app_service.models     # noqa: F401
+import timeline_service.models.task_model  # noqa: F401
+import crawler_service.models.crawl_model  # noqa: F401
+import app_service.models.user_model     # noqa: F401
 
-from agent_service.service.agent_service import AgentService
+from agent_service.services.agent_service import AgentService
 from agent_service.llm.deepseek_client import is_llm_available
 
 logging.basicConfig(level=logging.INFO)

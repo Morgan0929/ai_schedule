@@ -15,10 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from common.config import settings
 from common.database import get_db, init_db
 from common.exceptions import AppException
-from common.models.response import Result, PageResult
-from common.models.task import TaskCreateDTO, TaskUpdateDTO
+from common.schemas.response import Result, PageResult
+from common.schemas.task import TaskCreateDTO, TaskUpdateDTO
 
-from timeline_service.service.task_service import TaskService
+from timeline_service.services.task_service import TaskService
 
 
 @asynccontextmanager

@@ -3,7 +3,7 @@
 """
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from crawler_service.models import CrawlDataModel
+from crawler_service.models.crawl_model import CrawlDataModel
 
 
 class CrawlRepository:

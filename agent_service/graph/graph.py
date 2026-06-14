@@ -16,7 +16,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from agent_service.graph.state import AgentState
 from agent_service.graph.planner import planner_node
 from agent_service.graph.tools import execute_tool
-from agent_service.coordinator import coordinator_node
+from agent_service.utils.coordinator import coordinator_node
 from agent_service.llm.deepseek_client import chat_completion, is_llm_available
 from agent_service.llm.mock_agent import mock_chat
 
@@ -74,7 +74,7 @@ async def conflict_check_node(state: AgentState) -> dict[str, Any]:
     """
     冲突检测节点：检查新创建任务与已有任务是否冲突
     """
-    from timeline_service.conflict_detector import ConflictDetector, DetectedConflict
+    from timeline_service.utils.conflict_detector import ConflictDetector, DetectedConflict
     from timeline_service.repository.task_repo import TaskRepository
     from common.database import async_session_factory
 

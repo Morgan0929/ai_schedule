@@ -78,8 +78,8 @@ async def create_task_tool(user_id: int, title: str, start_time: str = None,
                            priority: str = "MEDIUM", location: str = None,
                            category: str = "PERSONAL") -> dict:
     """创建任务（含冲突检测），兼容 start/end 和 start_time/end_time"""
-    from common.models.task import TaskCreateDTO, PriorityEnum, TaskCategoryEnum
-    from timeline_service.service.task_service import TaskService
+    from common.schemas.task import TaskCreateDTO, PriorityEnum, TaskCategoryEnum
+    from timeline_service.services.task_service import TaskService
 
     # 参数名兼容
     st = start_time or start
@@ -133,12 +133,12 @@ def _normalize_datetime(dt_str: str, is_end: bool = False, reference_start: str 
 
 async def update_task_tool(user_id: int, task_id: int, **kwargs) -> dict:
     """更新任务"""
-    from common.models.task import TaskUpdateDTO
-    from timeline_service.service.task_service import TaskService
+    from common.schemas.task import TaskUpdateDTO
+    from timeline_service.services.task_service import TaskService
 
     # 转换枚举值
     if "priority" in kwargs and isinstance(kwargs["priority"], str):
-        from common.models.task import PriorityEnum
+        from common.schemas.task import PriorityEnum
         kwargs["priority"] = PriorityEnum(kwargs["priority"])
 
     dto = TaskUpdateDTO(**{k: v for k, v in kwargs.items() if v is not None})
@@ -152,7 +152,7 @@ async def update_task_tool(user_id: int, task_id: int, **kwargs) -> dict:
 
 async def delete_task_tool(user_id: int, task_id: int) -> dict:
     """删除任务"""
-    from timeline_service.service.task_service import TaskService
+    from timeline_service.services.task_service import TaskService
 
     async with async_session_factory() as db:
         service = TaskService(db)
@@ -165,7 +165,7 @@ async def delete_task_tool(user_id: int, task_id: int) -> dict:
 
 async def query_weather(user_id: int, city: str = "北京", target_date: str = None) -> dict:
     """查询天气（从爬虫数据获取）"""
-    from crawler_service.service.crawl_service import CrawlService
+    from crawler_service.services.crawl_service import CrawlService
 
     async with async_session_factory() as db:
         service = CrawlService(db)
@@ -185,7 +185,7 @@ async def query_flight(user_id: int, origin: str, destination: str,
 
 async def search_knowledge(user_id: int, query: str, top_k: int = 3) -> list[dict]:
     """搜索知识库"""
-    from rag_service.retriever import retriever
+    from rag_service.utils.retriever import retriever
     results = await retriever.search(query, top_k=top_k)
     return results
 
