@@ -8,6 +8,7 @@
 
 **项目名称**：AI Schedule Agent（日程智能助手）  
 **项目根目录**：`D:/AIagent日程规划/`  
+**项目结构**：`backend/` (Python AI后端) + `mobile/` (Flutter手机App) + `venv/` (Python虚拟环境)
 **代码仓库**：Gitee（待创建）  
 **项目类型**：Python AI Agent + 日程管理系统 + 数据采集平台 + 移动端应用
 
@@ -74,98 +75,60 @@ AI：已发现：
 
 ```
 D:/AIagent日程规划/
-├── CLAUDE.md                      # ← 本文件（项目核心上下文）
-├── README.md                      # 项目说明 + 快速启动
-├── .env.example                   # 环境变量模板
-├── .gitignore
-├── docker-compose.yml             # PostgreSQL + Redis + Qdrant
 ├── venv/                          # Python 3.12 虚拟环境
+├── .env / .env.example            # 环境变量 (API Key等)
+├── .gitignore
 │
-├── common/                        # 公共模块
-│   ├── config.py                  # pydantic-settings 全局配置
-│   ├── database.py                # SQLAlchemy 2.0 async 引擎
-│   ├── redis_client.py            # Redis 异步客户端
-│   ├── exceptions.py              # 6 种业务异常
-│   └── models/                    # 7 个 Pydantic 模型
-│       ├── response.py            # Result<T> / PageResult<T>
-│       ├── user.py                # UserDTO / Login / Create
-│       ├── task.py                # TaskDTO / 优先级枚举
-│       ├── timeline.py            # TimelineEvent / TimelineDTO
-│       ├── conflict.py            # ConflictDTO / Severity
-│       └── agent.py               # AgentChatRequest / Response
+├── backend/                       # Python AI 后端
+│   ├── CLAUDE.md                  # ← 本文件（项目核心上下文）
+│   ├── README.md
+│   ├── docker-compose.yml
+│   ├── requirements.txt (各服务独立)
+│   │
+│   ├── common/                    # 公共模块
+│   │   ├── config.py / database.py / exceptions.py
+│   │   ├── schemas/               # Pydantic 数据验证模型
+│   │   └── utils/                 # JWT / bcrypt
+│   │
+│   ├── app_service/     8000      # API 网关 & 用户认证
+│   ├── agent_service/   8002      # AI Agent (LangGraph + DeepSeek)
+│   ├── timeline_service/ 8003     # 时间线 & 冲突检测
+│   ├── crawler_service/ 8001      # 爬虫数据采集
+│   ├── rag_service/     8004      # RAG 知识库
+│   └── personal/                  # 本地个人脚本(不提交)
 │
-├── app_service/       端口 8000   # API 网关 & 用户认证
-│   ├── main.py                    # FastAPI + sys.path 修正
-│   ├── auth/jwt.py                # JWT 生成/解析
-│   └── requirements.txt
-│
-├── agent_service/     端口 8002   # AI Agent 核心
-│   ├── main.py                    # /api/v1/agent/chat
-│   ├── coordinator.py             # AI 协调决策引擎
-│   ├── graph/
-│   │   ├── state.py               # AgentState (LangGraph)
-│   │   ├── planner.py             # Planner 节点
-│   │   └── tools.py               # 6 个 Function Calling 工具
-│   ├── llm/
-│   │   ├── deepseek_client.py     # DeepSeek 异步客户端
-│   │   └── prompts.py             # 3 套系统提示词
-│   └── requirements.txt
-│
-├── timeline_service/  端口 8003   # 时间线 & 冲突检测
-│   ├── main.py                    # 时间线 + 冲突 API
-│   ├── engine.py                  # TimelineEngine
-│   ├── conflict_detector.py       # 4 条冲突检测规则
-│   ├── models.py                  # SQLAlchemy ORM 实体
-│   └── requirements.txt
-│
-├── crawler_service/   端口 8001   # 数据采集
-│   ├── main.py                    # APScheduler 生命周期
-│   ├── scheduler.py               # AsyncIOScheduler
-│   ├── spiders/                   # 爬虫脚本挂载点
-│   └── requirements.txt
-│
-├── rag_service/       端口 8004   # RAG 知识库
-│   ├── main.py                    # 文档上传/搜索 API
-│   ├── embeddings.py              # BGE-M3 嵌入 (1024维)
-│   ├── vector_store.py            # Qdrant 客户端
-│   ├── retriever.py               # 检索器
-│   └── requirements.txt
-│
-├── scripts/init-db.sql            # 8 张表完整建表脚本
-├── docs/api-spec.md               # API 接口文档
-└── tests/                         # 测试目录（待添加）
+└── mobile/                        # Flutter 手机 App
+    ├── lib/                       # Dart 源码
+    ├── android/ / ios/
+    └── pubspec.yaml
 ```
 
 > **注意**：服务目录使用下划线（`app_service`）而非连字符，因为 Python 无法从含连字符的目录 import 包。
-> 每个 `main.py` 顶部包含 `sys.path.insert(0, str(Path(__file__).parent.parent))` 以从任意目录启动。
+> 运行方式：从项目根目录 `python backend/app_service/main.py`
 
-### 3.2 微服务架构图
+### 3.2 系统架构图
 
 ```
-                    ┌──────────────────┐
-                    │   Flutter App     │
-                    │  (Android/iOS)    │
-                    └────────┬─────────┘
-                             │
-                    ┌────────▼─────────┐
-                    │  Nginx (反向代理)  │
-                    └────────┬─────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              │              │              │
-    ┌─────────▼────┐  ┌─────▼──────┐  ┌───▼──────────┐
-    │ app-service  │  │agent-service│  │timeline-svc   │
-    │ (API 网关)    │  │ (AI 核心)   │  │ (时间线引擎)   │
-    │ Port: 8000   │  │ Port: 8002  │  │ Port: 8003    │
-    └──────┬───────┘  └─────┬───────┘  └──────┬────────┘
-           │                │                  │
-    ┌──────▼───────┐  ┌─────▼───────┐  ┌──────▼────────┐
-    │ rag-service  │  │crawler-svc  │  │  共享基础设施   │
-    │ (知识库)      │  │ (数据采集)   │  │                │
-    │ Port: 8004   │  │ Port: 8001  │  │ PostgreSQL 16  │
-    └──────────────┘  └─────────────┘  │ Redis 7        │
-                                       │ Qdrant         │
-                                       └────────────────┘
+  ┌──────────┐     HTTP/WebSocket     ┌──────────────────────────┐
+  │  Flutter  │ ◄──────────────────► │  Python AI 后端           │
+  │  手机 App │                       │  (backend/)              │
+  │ (mobile/) │                       │                          │
+  └──────────┘                       │  ┌────────────────────┐  │
+                                     │  │ app_service :8000  │  │
+                                     │  │ agent_service:8002 │  │
+                                     │  │ timeline_svc :8003 │  │
+                                     │  │ crawler_svc  :8001 │  │
+                                     │  │ rag_service  :8004 │  │
+                                     │  └────────┬───────────┘  │
+                                     │           │              │
+                                     │  ┌────────▼───────────┐  │
+                                     │  │ PostgreSQL 16       │  │
+                                     │  │ Redis 7             │  │
+                                     │  │ Qdrant (向量数据库)  │  │
+                                     │  └────────────────────┘  │
+                                     └──────────────────────────┘
+
+  手机只是客户端 — AI/爬虫/数据库全部在后端运行
 ```
 
 ### 3.3 分层架构（以 agent-service 为例）

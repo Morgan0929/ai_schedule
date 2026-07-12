@@ -1,57 +1,24 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-*.egg-info/
-dist/
-build/
-eggs/
-*.egg
-*.whl
-
-# Virtual environment
+# Virtual environment (at project root)
 venv/
-.venv/
-env/
-.env/
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
-
-# Environment
-.env
-.env.local
-.env.*.local
-
-# Logs
-*.log
-logs/
-
-# Database
-*.db
-*.sqlite3
-
-# Docker
-.docker/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Jupyter
-.ipynb_checkpoints/
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-
-# MyPy
-.mypy_cache/
+# Personal files (not committed)
 personal/
+backend/personal/
+
+# Flutter
+mobile/build/
+mobile/.dart_tool/
+mobile/.packages
+.env
+.env.local
+backend/.env
+dev.db
+backend/dev.db
