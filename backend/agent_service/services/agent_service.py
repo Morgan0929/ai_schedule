@@ -2,6 +2,7 @@
 Agent 编排服务 — 核心对话入口
 
 接收用户自然语言 → LangGraph 工作流 → 返回结构化响应
+每次对话全程 Trace 记录
 """
 import uuid
 import logging
@@ -10,6 +11,7 @@ from common.schemas.agent import AgentChatRequest, AgentChatResponse, AgentSugge
 from agent_service.graph.graph import get_agent_graph
 from agent_service.graph.state import AgentState
 from agent_service.llm.deepseek_client import is_llm_available
+from agent_service.utils.tracer import start_trace
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +24,21 @@ class AgentService:
         """
         处理一次 Agent 对话
 
-        完整工作流:
-        1. Planner 解析意图
-        2. Tools 执行操作 (查询日历/创建任务/查天气)
-        3. Conflict 冲突检测
-        4. Coordinator 协调决策
-        5. Reply 生成回复
+        完整工作流 + Trace:
+        1. Planner 解析意图   → trace
+        2. Tools 执行操作      → trace
+        3. Conflict 冲突检测   → trace
+        4. Coordinator 协调    → trace
+        5. Reply 生成回复      → trace
         """
         session_id = request.session_id or str(uuid.uuid4())[:8]
+
+        # === 开启 Trace ===
+        tracer = start_trace(
+            session_id=session_id,
+            user_id=request.user_id or 0,
+            user_input=request.message,
+        )
 
         # 构建初始状态
         initial_state: AgentState = {
@@ -57,6 +66,28 @@ class AgentService:
             graph = get_agent_graph()
             final_state = await graph.ainvoke(initial_state)
 
+            # === Trace 各步骤 ===
+            tracer.add_step("planner",
+                input_data={"user_input": request.message[:200]},
+                output_data={"intent": final_state.get("intent"),
+                             "sub_tasks": final_state.get("sub_tasks", [])[:5]})
+
+            if final_state.get("actions_taken"):
+                tracer.add_step("tools",
+                    input_data={"sub_tasks": final_state.get("sub_tasks", [])[:5]},
+                    output_data={"actions": final_state.get("actions_taken"),
+                                 "tasks_created": final_state.get("tasks_created")})
+
+            if final_state.get("conflicts_found"):
+                tracer.add_step("conflict",
+                    output_data={"conflicts": final_state.get("conflicts_found"),
+                                 "count": final_state.get("conflict_count")})
+
+            if final_state.get("suggestions"):
+                tracer.add_step("coordinator",
+                    output_data={"suggestions": final_state.get("suggestions"),
+                                 "recommended": final_state.get("recommended_plan")})
+
             # 构建响应
             suggestions = []
             for s in final_state.get("suggestions", []):
@@ -72,6 +103,12 @@ class AgentService:
             if not is_llm_available() and "mock" not in reply.lower():
                 reply += "\n\n💡 提示：配置 DeepSeek API Key 后可使用完整 AI 能力。"
 
+            tracer.add_step("reply",
+                output_data={"reply": reply[:500]})
+
+            # === 结束 Trace ===
+            tracer.finish(reply)
+
             return AgentChatResponse(
                 reply=reply,
                 session_id=session_id,
@@ -84,6 +121,8 @@ class AgentService:
 
         except Exception as e:
             logger.exception(f"Agent chat error: {e}")
+            tracer.add_step("error", success=False, error=str(e))
+            tracer.finish(f"Error: {e}")
             return AgentChatResponse(
                 reply=f"抱歉，处理您的请求时遇到了问题：{e}\n\n请稍后重试或换一种方式描述。",
                 session_id=session_id,
