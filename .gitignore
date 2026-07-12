@@ -54,3 +54,4 @@ htmlcov/
 
 # MyPy
 .mypy_cache/
+personal/

@@ -4,6 +4,11 @@ SQLAlchemy 异步数据库配置
 支持 PostgreSQL（生产）和 SQLite（开发无 Docker 时）
 通过环境变量 USE_SQLITE=true 切换
 """
+import sys
+if sys.platform == 'win32':
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from common.config import settings
