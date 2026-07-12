@@ -137,14 +137,19 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
 
     structured_info = "\n\n".join(summary_parts) if summary_parts else ""
 
-    # 使用 LLM 或 mock 生成自然语言回复
+    # 使用 LLM 或 mock 生成自然语言回复（林的 persona）
     if is_llm_available() and structured_info:
         final_reply = await chat_completion([
-            {"role": "system", "content": f"你是日程助手。基于以下结构化信息生成友好的中文回复。\n\n{structured_info}\n\n用户意图: {intent}"},
+            {"role": "system", "content": (
+                "你是林，用户的个人事务秘书。性格随性开朗，像一个熟悉用户习惯的私人助理。\n"
+                "基于以下结构化信息，用林的口吻生成友好的中文回复。\n"
+                "保持简洁温暖，像朋友一样说话，但保持专业秘书的分寸。\n\n"
+                f"{structured_info}\n\n用户意图: {intent}"
+            )},
             {"role": "user", "content": state.get("user_input", "")},
         ], temperature=0.7, max_tokens=1024)
     elif structured_info:
-        final_reply = f"🤖 {structured_info}\n\n（配置 DeepSeek API Key 后回复将更自然流畅）"
+        final_reply = f"{structured_info}"
     else:
         final_reply = await mock_chat(state.get("user_input", ""))
 

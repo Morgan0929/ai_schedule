@@ -175,64 +175,65 @@ async def mock_chat(user_input: str) -> str:
         start = entities.get("start", "今天")
         end = entities.get("end", "7天后")
         return (
-            f"📅 正在查询 {start} ~ {end} 的日程安排...\n\n"
-            f"当前该时段暂无日程。\n"
-            f"💡 您可以告诉我具体要安排什么，比如：\n"
-            f"「帮我安排明天下午3点的产品评审会议」"
+            f"好的呀，帮你看看 {start} ~ {end} 的安排～\n\n"
+            f"【当前安排】\n"
+            f"这段时间暂时还没有日程，挺空的。\n\n"
+            f"需要我帮你安排什么吗？比如「明天下午3点开会」这样告诉我就行。"
         )
 
     if intent == "CREATE_TASK":
         title = entities.get("title", user_input)
         return (
-            f"✅ 已收到您的安排需求：{title}\n\n"
-            f"正在为您创建任务...\n"
-            f"已创建任务「{title}」\n"
+            f"收到，已经帮你记下啦～\n\n"
+            f"【确认】\n"
+            f"任务：{title}\n"
             f"时间：{entities.get('start', '待定')}\n"
             f"优先级：{entities.get('priority', 'MEDIUM')}\n\n"
-            f"💡 提示：如需要具体时间，请告诉我，例如：\n"
-            f"「安排在明天下午 3:00 到 5:00」"
+            f"如果需要指定具体时间，告诉我「下午3点到5点」就行。"
         )
 
     if intent == "ARRANGE_TRIP":
         dest = entities.get("destination", entities.get("city", "目的地"))
         return (
-            f"✈️ 出差安排：{dest}\n\n"
-            f"需要为您准备以下内容：\n"
-            f"1. 查询 {dest} 天气\n"
-            f"2. 查询航班/高铁\n"
-            f"3. 协调已有日程（冲突检测）\n"
-            f"4. 生成出差时间线\n\n"
-            f"💡 请告诉我具体日期，我来帮您一站式安排。"
+            f"好的，{dest}之行走起～\n\n"
+            f"【确认】\n"
+            f"出差地点：{dest}\n\n"
+            f"我会帮你准备好：\n"
+            f"  1. 查一下 {dest} 那几天的天气\n"
+            f"  2. 确认已有的日程有没有冲突\n"
+            f"  3. 生成一份出行时间线\n\n"
+            f"告诉我具体日期，我帮你一站式搞定。"
         )
 
     if intent == "DETECT_CONFLICT":
         return (
-            f"🔍 冲突检测引擎已启动...\n\n"
+            f"好嘞，帮你扫描一下～\n\n"
+            f"【当前安排】\n"
             f"检查范围：{entities.get('start', '未来7天')}\n"
-            f"当前未发现时间冲突。\n\n"
-            f"💡 如需检测特定任务是否冲突，请告诉我任务详情。"
+            f"目前没有发现时间冲突，安排挺合理的。\n\n"
+            f"如果有新的安排，随时告诉我，我会帮你检查会不会撞时间。"
         )
 
     if intent == "GENERATE_TIMELINE":
         return (
-            f"📋 时间线生成中...\n\n"
+            f"帮你整理一下时间线～\n\n"
             f"日期：{entities.get('start', date.today().isoformat())}\n"
-            f"当前该日暂无安排，时间线为空。\n\n"
-            f"💡 创建一些任务后，我可以为您生成可视化时间线。"
+            f"今天还没有安排呢，时间线是空的。\n\n"
+            f"先添加一些任务吧，我会帮你排成一条漂亮的时间线。"
         )
 
     if intent == "QUERY_WEATHER":
         city = entities.get("city", "北京")
         return (
-            f"🌤️ 正在查询 {city} 天气...\n\n"
-            f"（天气数据需要爬虫服务支持，当前为 mock 模式）\n"
-            f"💡 配置 DeepSeek API Key 后可获取实时天气信息。"
+            f"帮你看看 {city} 的天气～\n\n"
+            f"（天气数据需要后台服务支持，当前是离线模式）\n"
+            f"配置好之后就能实时查询啦。"
         )
 
-    # 默认对话
+    # 默认对话 — 林的开场白
     return (
-        f"🤖 您好！我是 AI 日程助手。\n\n"
-        f"我可以帮您：\n"
+        f"嗨，我是林，你的个人事务秘书～\n\n"
+        f"我能帮你打理这些事情：\n"
         f"• 📅 查询日程 — 试试「查看明天的安排」\n"
         f"• ✏️ 创建任务 — 试试「帮我安排周五下午的会议」\n"
         f"• 🔍 冲突检测 — 试试「检查下周有没有冲突」\n"
