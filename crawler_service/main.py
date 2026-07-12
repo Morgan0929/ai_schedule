@@ -156,7 +156,9 @@ async def refresh_schedule(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    手动刷新课表 — 更新 Redis 缓存 + SQL 持久化
+    手动刷新课表 — 延迟双删保证最终一致性
+
+    流程: 删缓存 → 写SQL → 等500ms → 再删缓存 → 预热今日数据
 
     使用场景:
     - 首次导入课表
@@ -168,52 +170,65 @@ async def refresh_schedule(
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
     from timeline_service.models.schedule_model import get_current_semester
-    from timeline_service.repository.schedule_repo import ScheduleRepository
     from personal.schedule_storage import (
-        save_schedule_to_sql, cache_daily_schedule,
-        get_week_schedule_from_cache, invalidate_daily_cache,
+        save_schedule_to_sql, cache_daily_schedule, invalidate_daily_cache,
     )
     from datetime import date, timedelta
 
     user_id = request.user_id
     semester = request.semester or get_current_semester()
+    today = date.today()
+    week_dates = [today + timedelta(days=i) for i in range(7)]
 
-    # === 1. 更新 SQL (删除旧数据 + 插入新数据) ===
+    # ============ 延迟双删 (Cache-Aside Double-Delete) ============
+
+    # === 第 1 次删除: 先清 Redis（防旧缓存被读到）===
+    deleted_count_1 = 0
+    for d in week_dates:
+        if await invalidate_daily_cache(user_id, d):
+            deleted_count_1 += 1
+
+    # === 更新 SQL ===
     saved_count = await save_schedule_to_sql(
-        user_id=user_id,
-        courses=request.courses,
-        source=request.source,
-        semester=semester,
+        user_id=user_id, courses=request.courses,
+        source=request.source, semester=semester,
     )
 
-    # === 2. 刷新 Redis 缓存 (清除本周旧缓存 + 重写) ===
-    today = date.today()
-    refreshed_days = 0
-    for i in range(7):
-        d = today + timedelta(days=i)
-        await invalidate_daily_cache(user_id, d)
+    # === 延迟等待（让并发中的读请求完成，避免它们把旧数据写回缓存）===
+    import asyncio
+    await asyncio.sleep(0.5)  # 500ms
 
-        # 查出该天的课程并写入 Redis
-        from timeline_service.repository.schedule_repo import ScheduleRepository
-        async with async_session_factory() as sdb:
-            srepo = ScheduleRepository(sdb)
-            day_courses = await srepo.find_by_date(user_id, d)
-            if day_courses:
-                course_list = [
-                    {"name": c.course_name, "time": f"{c.start_section}-{c.end_section}节",
-                     "location": c.location, "teacher": c.teacher}
-                    for c in day_courses
-                ]
-                await cache_daily_schedule(user_id, d, course_list)
-                refreshed_days += 1
+    # === 第 2 次删除: 再次清 Redis（清除并发写入的脏数据）===
+    deleted_count_2 = 0
+    for d in week_dates:
+        if await invalidate_daily_cache(user_id, d):
+            deleted_count_2 += 1
+
+    # === 预热今日数据 ===
+    from timeline_service.repository.schedule_repo import ScheduleRepository
+    async with async_session_factory() as sdb:
+        srepo = ScheduleRepository(sdb)
+        today_courses = await srepo.find_by_date(user_id, today)
+        if today_courses:
+            course_list = [
+                {"name": c.course_name, "time": f"{c.start_section}-{c.end_section}节",
+                 "location": c.location, "teacher": c.teacher}
+                for c in today_courses
+            ]
+            await cache_daily_schedule(user_id, today, course_list)
 
     await db.commit()
 
     return Result.success({
         "sql_saved": saved_count,
-        "redis_days_refreshed": refreshed_days,
         "semester": semester,
         "source": request.source,
+        "double_delete": {
+            "first": deleted_count_1,
+            "second": deleted_count_2,
+            "delay_ms": 500,
+        },
+        "today_warmed": len(today_courses) if today_courses else 0,
     })
 
 
