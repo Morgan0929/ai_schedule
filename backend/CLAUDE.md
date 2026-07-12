@@ -9,7 +9,7 @@
 **项目名称**：AI Schedule Agent（日程智能助手）  
 **项目根目录**：`D:/AIagent日程规划/`  
 **项目结构**：`backend/` (Python AI后端) + `mobile/` (Flutter手机App) + `venv/` (Python虚拟环境)
-**代码仓库**：Gitee（待创建）  
+**代码仓库**：https://gitee.com/<GITEE_USERNAME>/ai-schedule-management  
 **项目类型**：Python AI Agent + 日程管理系统 + 数据采集平台 + 移动端应用
 
 ### 核心业务场景
@@ -155,14 +155,13 @@ D:/AIagent日程规划/
 用户输入
     │
     ▼
-┌──────────┐
-│ Planner  │  ← 分析意图，拆解任务
-└────┬─────┘
-     │
+┌──────────┐   ┌─────────────────────────┐
+│ Planner  │──►│ AgentTracer (AI Trace)  │  ← 全程记录每一步
+└────┬─────┘   │ 记录: 输入/输出/耗时/成功 │
+     │         └─────────────────────────┘
      ▼
 ┌──────────────┐
-│ 调用工具      │  ← 查询日历 / 查客户安排 / 查天气 / 查航班
-│ (N 个并行)    │
+│ 调用工具      │  ← 查询日历 / 创建任务 / 查天气
 └────┬─────────┘
      │
      ▼
@@ -172,13 +171,24 @@ D:/AIagent日程规划/
      │
      ▼
 ┌──────────────┐
-│ AI 协调决策   │  ← 生成多方案 + 推荐最佳
+│ AI 协调决策   │  ← 生成 A/B/C 多方案 + 推荐最佳
 └────┬─────────┘
      │
      ▼
 ┌──────────────┐
 │ 生成回复      │  ← 格式化输出给用户
 └──────────────┘
+     │
+     ▼
+  AgentTracer.finish()  ← 持久化到 PostgreSQL agent_session 表
+```
+
+Trace 输出示例:
+```
+[Trace:a1b2c3] [Plan] planner      [OK] 9349ms → intent: CREATE_TASK
+[Trace:a1b2c3] [Tool] tools        [OK] 9349ms → tasks_created: [1]
+[Trace:a1b2c3] [Reply] reply        [OK] 9349ms
+[Trace:a1b2c3] 会话结束 — 3步 耗时9349ms OK
 ```
 
 ---
@@ -200,13 +210,42 @@ D:/AIagent日程规划/
 | **Phase 6** | 2 周 | Flutter APP | 移动端完成、端到端联调 |
 | **Phase 7** | — | 部署上线 | Docker 容器化、Nginx 配置、CI/CD |
 
-### 4.3 当前焦点 → Phase 1
-先完成**项目骨架搭建**：
-- Python 环境配置
-- FastAPI 项目初始化
-- 多服务目录结构
-- 公共模块（Pydantic 模型、异常、配置）
-- PostgreSQL + Redis + Qdrant Docker 环境
+### 4.3 当前进度
+
+| Phase | 状态 | 内容 |
+|-------|------|------|
+| Phase 1 — 骨架 | ✅ | FastAPI 5服务 + common + Docker Compose |
+| Phase 2 — CRUD | ✅ | User/Task CRUD + bcrypt + JWT + PostgreSQL |
+| Phase 3 — 爬虫 | ✅ | 4 爬虫: BS4 + Playwright + httpx + APScheduler |
+| Phase 4 — Agent | ✅ | LangGraph 5节点 + DeepSeek LLM + Mock双模式 |
+| Phase 5 — RAG | ✅ | SimpleEmbedding + 内存向量 + Agent集成 |
+| Phase 6 — Flutter | 🔲 | 移动端开发 (V1 MVP) |
+| Phase 7 — 部署 | 🔲 | Docker Compose + Nginx |
+
+### 4.4 V1 MVP 范围（当前焦点）
+
+**做**：
+- ✅ 用户登录/注册
+- ✅ 手动创建/删除/查询任务
+- ✅ AI 添加/删除/修改任务
+- ✅ 时间冲突检测
+- ✅ 课表爬取 + 双层存储
+- 🔲 手机 App (Flutter)
+
+**不做**：
+- ❌ 爬100个网站
+- ❌ 自训练/自部署大模型
+- ❌ 多 Agent 协作
+
+### 4.5 安全原则
+
+| # | 原则 | 实现 |
+|---|------|------|
+| 1 | DeepSeek Key 不放 APP | `.env` 仅后端，Flutter→后端→DeepSeek |
+| 2 | AI 不直操作 DB | Agent → Function → Service → Repository → DB |
+| 3 | 不自己部署大模型 | DeepSeek API (deepseek-chat) |
+| 4 | AI 全链路 Trace | `AgentTracer` 记录每一步决策 |
+| 5 | 手机只是客户端 | AI/爬虫/数据库全部在后端运行 |
 
 ---
 
@@ -351,7 +390,29 @@ AI 分析维度：
   方案C：兜底方案 + 影响分析
 ```
 
-### 6.4 时间线数据结构
+### 6.4 课表存储架构（Redis + PostgreSQL 双层）
+
+```
+[GDUT 爬虫 / 手动刷新]
+        │
+        ▼
+  POST /api/v1/crawl/schedule/refresh
+        │
+  延迟双删 (Cache-Aside Double-Delete):
+  ① 删 Redis (本周7天)
+  ② 更新 PostgreSQL (删旧 + 插新)
+  ③ sleep 500ms (等并发完成)
+  ④ 再删 Redis (清脏数据)
+  ⑤ 预热今日数据
+        │
+   ┌────┴────┐
+   ▼         ▼
+[Redis]   [PostgreSQL]
+ TTL=1d    schedule 表
+ 今日视图   持久化+学期清理
+```
+
+### 6.5 时间线数据结构
 
 ```json
 {
