@@ -59,7 +59,7 @@ AI：已发现：
 | 嵌入模型 | BGE-M3 | 中文嵌入向量生成 |
 | LLM | DeepSeek V4 / DeepSeek R1 | 成本低、中文强、API 便宜 |
 | Agent 框架 | LangGraph | 任务编排、状态图、工具调用（最值得学） |
-| 爬虫 | requests + BeautifulSoup4 → Playwright | 第一阶段简单爬取，第二阶段动态渲染 |
+| 爬虫 | requests + BeautifulSoup4 + Playwright | 4 个爬虫: weather(httpx) / news(BS4+lxml解析HTML) / calendar(httpx+离线) / dynamic(Playwright渲染JS) |
 | 定时任务 | APScheduler | 定时自动采集数据 |
 | 语音 | Whisper（输入） + CosyVoice（输出） | 后期升级语音交互 |
 | 移动端 | Flutter | 一套代码 Android + iOS |
@@ -483,6 +483,15 @@ docker-compose.yml
 ├── redis (6379)
 └── qdrant (6333)
 ```
+
+### 爬虫注册表
+
+| 爬虫 | 技术栈 | 数据源 |
+|------|--------|--------|
+| `weather` | httpx | wttr.in JSON API |
+| `news` | **BeautifulSoup4 + lxml** | HackerNews HTML 页面解析 |
+| `calendar` | httpx + 离线回退 | nager.at API / 中国法定节假日 |
+| `dynamic` | **Playwright (Chromium headless)** | 任意 JS 渲染页面 |
 
 ---
 

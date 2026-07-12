@@ -9,12 +9,14 @@ from crawler_service.spiders.base import BaseSpider
 from crawler_service.spiders.weather_spider import WeatherSpider
 from crawler_service.spiders.news_spider import NewsSpider
 from crawler_service.spiders.calendar_spider import CalendarSpider
+from crawler_service.spiders.dynamic_spider import DynamicSpider
 
 # 所有已注册的爬虫
 SPIDER_REGISTRY: dict[str, BaseSpider] = {
     "weather": WeatherSpider(),
-    "news": NewsSpider(),
+    "news": NewsSpider(),       # BeautifulSoup4 + lxml
     "calendar": CalendarSpider(),
+    "dynamic": DynamicSpider(),  # Playwright headless
 }
 
 
