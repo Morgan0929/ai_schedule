@@ -161,24 +161,152 @@ async def delete_task_tool(user_id: int, task_id: int) -> dict:
         return {"task_id": task_id, "status": "deleted"}
 
 
-# ============ 外部数据工具 ============
+# ============ 天气工具 ============
 
 async def query_weather(user_id: int, city: str = "北京", target_date: str = None) -> dict:
-    """查询天气（从爬虫数据获取）"""
-    from crawler_service.services.crawl_service import CrawlService
+    """
+    查询天气 — 优先缓存，无缓存则实时请求 wttr.in (免费 API)
 
+    Args:
+        city: 城市名（中文或拼音），默认北京
+        target_date: 日期 YYYY-MM-DD（1-3天预报）
+    """
+    # 1. 先查缓存
+    from crawler_service.services.crawl_service import CrawlService
     async with async_session_factory() as db:
         service = CrawlService(db)
         record = await service.get_latest("weather")
         if record and record.raw_data:
-            return {"city": city, "source": "cached", "data": record.raw_data}
-        return {"city": city, "source": "not_available", "message": "暂无天气数据，请先触发爬取"}
+            data = record.raw_data.get("data", {})
+            if data.get("city") == city:
+                return {"city": city, "source": "cached", **record.raw_data}
 
+    # 2. 实时请求 wttr.in
+    try:
+        import httpx
+        url = f"https://wttr.in/{city}?format=j1"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, follow_redirects=True)
+            resp.raise_for_status()
+            raw = resp.json()
+
+        current = raw.get("current_condition", [{}])[0]
+        forecasts = raw.get("weather", [])[:3]
+
+        return {
+            "city": city, "source": "realtime",
+            "current": {
+                "temp": f"{current.get('temp_C', '?')}C",
+                "desc": current.get("weatherDesc", [{}])[0].get("value", ""),
+                "humidity": f"{current.get('humidity', '?')}%",
+                "wind": f"{current.get('windspeedKmph', '?')} km/h",
+            },
+            "daily": [{
+                "date": f.get("date", ""),
+                "high": f"{f.get('maxtempC', '?')}C",
+                "low": f"{f.get('mintempC', '?')}C",
+                "desc": f.get("hourly", [{}])[4].get("weatherDesc", [{}])[0].get("value", ""),
+            } for f in forecasts],
+        }
+    except Exception as e:
+        return {"city": city, "source": "unavailable", "error": str(e)}
+
+
+# ============ 地图 & 定位工具 ============
+
+CITY_COORDS = {
+    "北京": (39.90, 116.40), "上海": (31.23, 121.47), "广州": (23.13, 113.26),
+    "深圳": (22.54, 114.05), "杭州": (30.28, 120.15), "成都": (30.57, 104.06),
+    "南京": (32.06, 118.79), "武汉": (30.58, 114.30), "重庆": (29.56, 106.55),
+    "西安": (34.26, 108.94), "长沙": (28.22, 112.93), "郑州": (34.75, 113.62),
+    "天津": (39.13, 117.20), "苏州": (31.30, 120.62), "东莞": (23.05, 113.75),
+    "佛山": (23.02, 113.12), "珠海": (22.27, 113.58), "厦门": (24.48, 118.08),
+    "青岛": (36.07, 120.38), "大连": (38.91, 121.61),
+}
+
+
+def _haversine(lat1, lon1, lat2, lon2) -> float:
+    import math
+    R = 6371
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2 +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+         math.sin(dlon / 2) ** 2)
+    return round(R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)), 1)
+
+
+async def get_travel_time(user_id: int, origin: str, destination: str,
+                          mode: str = "car") -> dict:
+    """
+    估算两地之间的出行时间和距离
+
+    Args:
+        origin: 出发地（城市名）
+        destination: 目的地（城市名）
+        mode: 出行方式 walk/bike/bus/car，默认 car
+    """
+    o = CITY_COORDS.get(origin)
+    d = CITY_COORDS.get(destination)
+    if not o: return {"error": f"未找到「{origin}」", "known": list(CITY_COORDS.keys())[:15]}
+    if not d: return {"error": f"未找到「{destination}」", "known": list(CITY_COORDS.keys())[:15]}
+
+    km = _haversine(*o, *d)
+    road_km = round(km * 1.3, 1)
+    speeds = {"walk": 5, "bike": 15, "bus": 30, "car": 60}
+    hours = road_km / speeds.get(mode, 60)
+    if hours >= 1:
+        time_str = f"{int(hours)}h{int((hours % 1) * 60)}min"
+    else:
+        time_str = f"{int(hours * 60)}min"
+
+    if road_km < 1: advice = "步行即可"
+    elif road_km < 5: advice = "建议骑行或公交"
+    elif road_km < 50: advice = "建议驾车或地铁"
+    elif road_km < 500: advice = "建议高铁"
+    else: advice = "建议飞机"
+
+    return {
+        "origin": origin, "destination": destination,
+        "straight_km": km, "road_km": road_km,
+        "mode": mode, "estimated_time": time_str, "advice": advice,
+    }
+
+
+async def search_location(user_id: int, query: str) -> dict:
+    """
+    搜索地点信息 (OpenStreetMap Nominatim, 免费 API)
+
+    Args:
+        query: 搜索关键词（地名/地址）
+    """
+    try:
+        import httpx
+        url = "https://nominatim.openstreetmap.org/search"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params={
+                "q": query, "format": "json", "limit": 5, "accept-language": "zh"
+            }, headers={"User-Agent": "AIScheduleAgent-Lin/1.0"})
+            resp.raise_for_status()
+            data = resp.json()
+        return {
+            "query": query,
+            "results": [{
+                "name": p.get("display_name", ""),
+                "lat": float(p.get("lat", 0)),
+                "lon": float(p.get("lon", 0)),
+                "type": p.get("type", ""),
+            } for p in data[:5]],
+        }
+    except Exception as e:
+        return {"query": query, "error": str(e)}
+
+
+# ============ 航班（预留）============
 
 async def query_flight(user_id: int, origin: str, destination: str,
                        flight_date: str = None) -> list[dict]:
-    """查询航班（预留）"""
-    return [{"message": "航班查询功能开发中", "origin": origin, "destination": destination}]
+    return [{"message": "航班查询开发中", "origin": origin, "destination": destination}]
 
 
 # ============ 知识库工具 ============
@@ -193,17 +321,22 @@ async def search_knowledge(user_id: int, query: str, top_k: int = 3) -> list[dic
 # ============ 工具注册表 ============
 
 TOOL_MAP = {
+    # 日历 & 任务
     "query_calendar": query_calendar,
     "check_calendar": query_calendar,
     "create_task": create_task_tool,
     "create_task_tool": create_task_tool,
-    "create_event": create_task_tool,  # LLM sometimes uses this name
+    "create_event": create_task_tool,
     "update_task": update_task_tool,
     "update_task_tool": update_task_tool,
     "delete_task": delete_task_tool,
     "delete_task_tool": delete_task_tool,
     "delete_event": delete_task_tool,
+    # 天气 & 出行
     "query_weather": query_weather,
+    "get_travel_time": get_travel_time,
+    "search_location": search_location,
     "query_flight": query_flight,
+    # 知识库
     "search_knowledge": search_knowledge,
 }
