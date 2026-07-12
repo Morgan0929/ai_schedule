@@ -3,11 +3,11 @@
 
 用于需要 JavaScript 执行才能加载内容的页面
 技术栈: Playwright (Chromium headless)
+定位方式: XPath (不使用 CSS selector)
 """
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any
 from crawler_service.spiders.base import BaseSpider, SpiderResult
 
 logger = logging.getLogger(__name__)
@@ -22,24 +22,27 @@ class DynamicSpider(BaseSpider):
     - AJAX 异步加载内容
     - 需要点击/滚动/等待的交互页面
     - 验证码截图
+
+    所有元素定位使用 XPath
     """
 
     name = "dynamic"
-    description = "Playwright JS 渲染爬虫 — 抓取需要 JavaScript 的动态页面"
-    version = "1.0.0"
+    description = "Playwright JS 渲染爬虫 (XPath 定位)"
+    version = "1.1.0"
 
     async def crawl(self, **params) -> SpiderResult:
         """
         使用 Playwright 渲染并提取页面内容
 
         Params:
-            url:         目标 URL (必填)
-            action:      操作类型
-                - "extract"  : 提取渲染后的文本和链接 (默认)
+            url:          目标 URL (必填)
+            action:       操作类型
+                - "extract"   : 提取渲染后的文本和链接 (默认)
                 - "screenshot": 截图保存
-                - "wait"     : 等待特定元素出现后提取
-            wait_for:    等待的选择器 (action=wait 时必填)
-            wait_ms:     额外等待毫秒数 (默认 2000)
+                - "wait"      : 等待特定 XPath 元素出现后提取
+            wait_for_xpath: 等待的 XPath 表达式 (action=wait 时必填)
+                例: "//div[@id='content']" "//span[contains(@class,'title')]"
+            wait_ms:       额外等待毫秒数 (默认 2000)
             extract_links: 是否提取链接 (默认 True)
         """
         url = params.get("url", "")
@@ -47,7 +50,7 @@ class DynamicSpider(BaseSpider):
             return self.error_result("dynamic", "缺少 url 参数")
 
         action = params.get("action", "extract")
-        wait_for = params.get("wait_for", "")
+        wait_for_xpath = params.get("wait_for_xpath", "")
         wait_ms = params.get("wait_ms", 2000)
         extract_links = params.get("extract_links", True)
 
@@ -65,13 +68,15 @@ class DynamicSpider(BaseSpider):
                 # 访问页面
                 await page.goto(url, wait_until="networkidle", timeout=30000)
 
-                # 等待 JS 渲染完成
-                if wait_for:
+                # 等待 JS 渲染完成（XPath）
+                if wait_for_xpath:
                     try:
-                        await page.wait_for_selector(wait_for, timeout=10000)
-                        logger.info(f"Playwright: 元素 {wait_for} 已出现")
+                        await page.wait_for_selector(
+                            f"xpath={wait_for_xpath}", timeout=10000
+                        )
+                        logger.info(f"Playwright: XPath {wait_for_xpath} 已匹配")
                     except Exception as e:
-                        logger.warning(f"Playwright: 等待 {wait_for} 超时: {e}")
+                        logger.warning(f"Playwright: 等待 XPath {wait_for_xpath} 超时: {e}")
 
                 await asyncio.sleep(wait_ms / 1000)
 
@@ -92,15 +97,24 @@ class DynamicSpider(BaseSpider):
                         "data": base64.b64encode(screenshot).decode()[:200] + "...",
                     })
 
-                # 提取链接
+                # 提取链接 (XPath)
                 if extract_links:
                     links = await page.evaluate("""
                         () => {
-                            const anchors = document.querySelectorAll('a[href]');
-                            return Array.from(anchors).slice(0, 50).map(a => ({
-                                text: a.innerText.trim().substring(0, 100),
-                                href: a.href.substring(0, 200)
-                            }));
+                            const anchors = document.evaluate(
+                                '//a[@href]', document, null,
+                                XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
+                            );
+                            const result = [];
+                            const limit = Math.min(anchors.snapshotLength, 50);
+                            for (let i = 0; i < limit; i++) {
+                                const a = anchors.snapshotItem(i);
+                                result.push({
+                                    text: (a.innerText || '').trim().substring(0, 100),
+                                    href: (a.href || '').substring(0, 200)
+                                });
+                            }
+                            return result;
                         }
                     """)
                     for link in links[:30]:
@@ -123,7 +137,7 @@ class DynamicSpider(BaseSpider):
                         "text_length": len(body_text),
                         "text_preview": text_preview[:500],
                         "links_found": len(items),
-                        "rendered_by": "Playwright (Chromium headless)",
+                        "rendered_by": "Playwright (Chromium headless) + XPath",
                         "crawled_at": datetime.now().isoformat(),
                     },
                     items=items,
