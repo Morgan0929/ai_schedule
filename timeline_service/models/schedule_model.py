@@ -55,31 +55,79 @@ class ScheduleModel(Base):
                 f"[{self.semester}])>")
 
 
+# 学期中文名映射
+SEMESTER_SPRING = "春季"
+SEMESTER_FALL = "秋季"
+SEMESTER_SHORT = "短学期"  # 夏季小学期
+
+
 def get_current_semester() -> str:
-    """获取当前学期标识"""
+    """
+    获取当前学期标识，格式与 GDUT 页面一致
+
+    返回: "2026年春季" / "2026年秋季"
+    """
     today = date.today()
     year = today.year
-    # 2-7月为春季，8-1月为秋季
     if 2 <= today.month <= 7:
-        return f"{year}-SPRING"
+        return f"{year}年{SEMESTER_SPRING}"
     else:
-        return f"{year}-FALL"
+        return f"{year}年{SEMESTER_FALL}"
+
+
+def parse_semester(text: str) -> str | None:
+    """
+    从页面文本提取学期标识（爬虫用）
+
+    支持格式:
+    - "2026年秋季"
+    - "2025-2026学年第二学期"
+    - "2026年春季学期"
+    """
+    import re
+
+    # "2026年秋季" / "2026年春季"
+    m = re.search(r'(\d{4})年(春季|秋季|夏季|短学期)', text)
+    if m:
+        return f"{m.group(1)}年{m.group(2)}"
+
+    # "2025-2026学年第二学期" → 第二学期=春季
+    m = re.search(r'(\d{4})-(\d{4})学年第(.)学期', text)
+    if m:
+        year_end = int(m.group(2))
+        term_num = m.group(3)
+        if term_num in ('一', '1'):
+            return f"{year_end - 1}年{SEMESTER_FALL}"
+        elif term_num in ('二', '2'):
+            return f"{year_end}年{SEMESTER_SPRING}"
+        elif term_num in ('三', '3'):
+            return f"{year_end}年{SEMESTER_SHORT}"
+
+    return None
 
 
 def get_past_semesters() -> list[str]:
-    """获取已过期的学期列表（用于清理）"""
+    """
+    获取已过期的学期列表（用于清理）
+
+    当前学期为春季时，去年秋季+去年春季已过期
+    当前学期为秋季时，今年春季+去年秋季已过期
+    """
     current = get_current_semester()
-    parts = current.split("-")
-    year, term = int(parts[0]), parts[1]
+    import re
+    m = re.match(r'(\d{4})年(春季|秋季|短学期)', current)
+    if not m:
+        return []
+
+    year = int(m.group(1))
+    term = m.group(2)
 
     past = []
-    # 返回之前两个学期的标识
-    if term == "SPRING":
-        past.append(f"{year-1}-FALL")
-        past.append(f"{year-1}-SPRING")
+    if term == SEMESTER_SPRING:
+        past = [f"{year - 1}年{SEMESTER_FALL}", f"{year - 1}年{SEMESTER_SPRING}"]
+    elif term == SEMESTER_FALL:
+        past = [f"{year}年{SEMESTER_SPRING}", f"{year - 1}年{SEMESTER_FALL}"]
     else:
-        past.append(f"{year}-SPRING")
-        past.append(f"{year-1}-FALL")
+        past = [f"{year}年{SEMESTER_SPRING}", f"{year - 1}年{SEMESTER_FALL}"]
 
-    # 排除当前学期
     return [p for p in past if p != current]
