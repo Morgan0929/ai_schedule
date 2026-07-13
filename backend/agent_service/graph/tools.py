@@ -309,6 +309,25 @@ async def query_flight(user_id: int, origin: str, destination: str,
     return [{"message": "航班查询开发中", "origin": origin, "destination": destination}]
 
 
+# ============ 文档分析 (Document Analyzer) ============
+
+async def analyze_document(user_id: int, image_base64: str,
+                           doc_type: str = "generic", hint: str = "") -> dict:
+    """
+    分析文档图片 — 课表/作业/通知/票据等
+
+    林收到用户上传的图片后，调用此工具识别内容，
+    返回结构化数据，再由 Calendar/Task/Reminder 工具处理。
+
+    Args:
+        image_base64: 图片的 base64 编码
+        doc_type:     文档类型 course_schedule/homework/exam_notice/ticket/generic
+        hint:         用户的额外提示
+    """
+    from agent_service.tools.document_analyzer import DocumentAnalyzer
+    return await DocumentAnalyzer.analyze(image_base64, doc_type, hint)
+
+
 # ============ 知识库工具 ============
 
 async def search_knowledge(user_id: int, query: str, top_k: int = 3) -> list[dict]:
@@ -337,6 +356,8 @@ TOOL_MAP = {
     "get_travel_time": get_travel_time,
     "search_location": search_location,
     "query_flight": query_flight,
+    # 文档分析
+    "analyze_document": analyze_document,
     # 知识库
     "search_knowledge": search_knowledge,
 }
