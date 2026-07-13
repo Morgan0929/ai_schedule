@@ -137,16 +137,18 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
 
     structured_info = "\n\n".join(summary_parts) if summary_parts else ""
 
-    # 使用 LLM 或 mock 生成自然语言回复（林的 persona）
+    # 使用 ChatPromptTemplate 生成林的口吻回复
     if is_llm_available() and structured_info:
+        from agent_service.llm.prompts import reply_prompt
+        prompt_value = reply_prompt.invoke({
+            "structured_info": structured_info,
+            "intent": intent,
+            "user_input": state.get("user_input", ""),
+        })
+        msgs = prompt_value.to_messages()
         final_reply = await chat_completion([
-            {"role": "system", "content": (
-                "你是林，用户的个人事务秘书。性格随性开朗，像一个熟悉用户习惯的私人助理。\n"
-                "基于以下结构化信息，用林的口吻生成友好的中文回复。\n"
-                "保持简洁温暖，像朋友一样说话，但保持专业秘书的分寸。\n\n"
-                f"{structured_info}\n\n用户意图: {intent}"
-            )},
-            {"role": "user", "content": state.get("user_input", "")},
+            {"role": "system" if msgs[0].type == "system" else msgs[0].type, "content": msgs[0].content},
+            {"role": "user", "content": msgs[1].content},
         ], temperature=0.7, max_tokens=1024)
     elif structured_info:
         final_reply = f"{structured_info}"

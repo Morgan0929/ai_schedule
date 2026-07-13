@@ -125,21 +125,28 @@ class DocumentAnalyzer:
         )
 
         from agent_service.llm.deepseek_client import is_llm_available, get_llm_client
+        from agent_service.llm.prompts import vision_system_template
         import json
 
         if not is_llm_available():
-            return {
-                "type": doc_type, "items": [], "mock": True,
-                "summary": "Document Analyzer 需要 DeepSeek API Key",
-            }
+            return {"type": doc_type, "items": [], "mock": True,
+                    "summary": "Document Analyzer 需要 DeepSeek API Key"}
 
         try:
             client = get_llm_client()
             if not client:
                 return {"type": doc_type, "items": [], "mock": True, "summary": "API 不可用"}
 
+            # System Prompt from template, User message as multimodal
+            system_content = vision_system_template.format(
+                doc_type_label=schema["label"],
+                doc_fields=", ".join(schema["fields"]),
+                hint=hint,
+                doc_type=doc_type,
+                suggested_action=schema["follow_up"] or "none",
+            )
             messages = [
-                {"role": "system", "content": system},
+                {"role": "system", "content": system_content},
                 {"role": "user", "content": [
                     {"type": "text", "text": "请分析这张文档图片"},
                     {"type": "image_url", "image_url": {
@@ -149,21 +156,14 @@ class DocumentAnalyzer:
             ]
 
             from common.config import Settings
-            model = Settings().DEEPSEEK_MODEL
-
             resp = await client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=2048,
+                model=Settings().DEEPSEEK_MODEL, messages=messages,
+                temperature=0.3, max_tokens=2048,
             )
-            raw = resp.choices[0].message.content
+            raw = resp.choices[0].message.content.strip()
 
-            # Parse JSON
-            try:
-                result = json.loads(raw.strip())
-            except json.JSONDecodeError:
-                result = _extract_json(raw)
+            try: result = json.loads(raw)
+            except json.JSONDecodeError: result = _extract_json(raw)
 
             if result:
                 logger.info(f"DocumentAnalyzer: {doc_type} → {len(result.get('items', []))} items")
