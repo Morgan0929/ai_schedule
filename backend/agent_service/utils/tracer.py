@@ -1,5 +1,8 @@
 """
-AI Trace 日志系统
+AI Trace 日志系统 — 双层记录
+
+本地:  控制台实时输出 + PostgreSQL agent_session 表
+云端:  LangSmith (飞行记录仪 — 不依赖它运行核心功能)
 
 记录每次 Agent 对话的完整链路:
 - 用户输入
@@ -8,9 +11,6 @@ AI Trace 日志系统
 - 冲突检测结果
 - Coordinator 协调方案
 - 最终回复
-
-存入 PostgreSQL agent_session 表 + agent_trace 表
-用于排查"AI 为什么这样安排？"
 """
 import json
 import logging
@@ -24,6 +24,53 @@ logger = logging.getLogger("ai_trace")
 
 # 是否同时输出到控制台
 CONSOLE_TRACE = True
+
+
+# ============ LangSmith 飞行记录仪 ============
+
+def _get_langsmith_client():
+    """获取 LangSmith 客户端（不影响核心功能，失败了就当不存在）"""
+    try:
+        from common.config import settings
+        if not settings.LANGCHAIN_API_KEY:
+            return None
+
+        from langsmith import Client
+        return Client(api_key=settings.LANGCHAIN_API_KEY)
+    except Exception:
+        return None
+
+
+def _send_to_langsmith(trace_id: str, summary: dict):
+    """
+    异步发送 Trace 到 LangSmith
+
+    这是"飞行记录仪"——只记录，不影响飞行。
+    失败了就静默忽略，不让 LangSmith 成为单点故障。
+    """
+    try:
+        client = _get_langsmith_client()
+        if not client:
+            return
+
+        # 创建 Run
+        run = client.create_run(
+            name=f"Lin-Chat-{trace_id}",
+            run_type="chain",
+            inputs={"user_input": summary.get("user_input", "")},
+            outputs={"reply": summary.get("final_reply", "")[:500]},
+            project_name="lin-ai-secretary",
+            tags=["agent", "lin"],
+            extra={
+                "session_id": summary.get("session_id", ""),
+                "user_id": summary.get("user_id", 0),
+                "steps": summary.get("steps", []),
+                "total_ms": summary.get("total_ms", 0),
+            },
+        )
+        logger.debug(f"LangSmith run: {run.id}")
+    except Exception:
+        pass  # 飞行记录仪故障不影响飞行
 
 
 @dataclass
@@ -102,9 +149,15 @@ class AgentTracer:
                   f"{'OK' if summary['success'] else 'FAIL'}")
             print(f"{'='*60}\n")
 
-        # 异步存入数据库（不阻塞回复）
+        # 异步存入数据库 + LangSmith 飞行记录仪（不阻塞回复）
         import asyncio
         asyncio.create_task(self._persist(summary))
+        # LangSmith 后台发送 —— 失败了不影响用户
+        try:
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, _send_to_langsmith, self.trace_id, summary)
+        except RuntimeError:
+            pass
 
         return summary
 

@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
     DEEPSEEK_MODEL: str = "deepseek-chat"
 
+    # ============ LangSmith ============
+    LANGCHAIN_API_KEY: str = ""
+    LANGCHAIN_TRACING_V2: bool = False
+    LANGCHAIN_PROJECT: str = "lin-ai-secretary"
+
     # ============ 服务端口 ============
     APP_SERVICE_PORT: int = 8000
     CRAWLER_SERVICE_PORT: int = 8001
