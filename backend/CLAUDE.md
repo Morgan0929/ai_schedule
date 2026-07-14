@@ -212,15 +212,30 @@ Trace 输出示例:
 
 ### 4.3 当前进度
 
-| Phase | 状态 | 内容 |
-|-------|------|------|
-| Phase 1 — 骨架 | ✅ | FastAPI 5服务 + common + Docker Compose |
-| Phase 2 — CRUD | ✅ | User/Task CRUD + bcrypt + JWT + PostgreSQL |
-| Phase 3 — 爬虫 | ✅ | 4 爬虫: BS4 + Playwright + httpx + APScheduler |
-| Phase 4 — Agent | ✅ | LangGraph 5节点 + DeepSeek LLM + Mock双模式 |
+| Phase | 状态 | 关键交付 |
+|-------|------|----------|
+| Phase 1 — 骨架 | ✅ | FastAPI 5服务 + common模块 |
+| Phase 2 — CRUD | ✅ | User/Task CRUD + bcrypt + JWT + PostgreSQL + SQLite |
+| Phase 3 — 爬虫 | ✅ | 4爬虫(BS4/Playwright/httpx) + APScheduler |
+| Phase 4 — Agent | ✅ | LangGraph + DeepSeek + Pydantic结构化输出 + 流式SSE |
 | Phase 5 — RAG | ✅ | SimpleEmbedding + 内存向量 + Agent集成 |
-| Phase 6 — Flutter | 🔲 | 移动端开发 (V1 MVP) |
+| Phase 6 — Flutter | 🔲 | 移动端 (Flutter + Dart) |
 | Phase 7 — 部署 | 🔲 | Docker Compose + Nginx |
+
+### Agent 架构详情
+
+```
+林 Agent
+├── System Prompt: messages[0] = LIN_SYSTEM_PROMPT (固定人格)
+├── Planner Node: ChatPromptTemplate → Pydantic(PlannerOutput) → intent/sub_tasks
+├── Tools: 16 个工具 (calendar/task/weather/travel/vision/knowledge)
+├── Coordinator Node: ChatPromptTemplate → Pydantic(ConflictOutput) → solutions
+└── Reply Node: ChatPromptTemplate → stream_reply() → SSE 流式输出
+
+每个 Node 独立 ChatPromptTemplate + Pydantic Structured Output
+Node=流程 Prompt=思考 Tool=执行
+换模型(Qwen/GPT-4V)只改 deepseek_client.py
+```
 
 ### 4.4 V1 MVP 范围（当前焦点）
 
