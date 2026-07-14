@@ -122,3 +122,30 @@ async def chat_completion_json(
         pass
 
     return {"raw": content, "parse_error": True}
+
+
+# ============ Structured Output (Pydantic) ============
+
+def get_structured_llm(output_schema: type):
+    """
+    返回一个支持结构化输出的 LLM 实例
+
+    用法:
+        llm = get_structured_llm(PlannerOutput)
+        result = llm.invoke(messages)  # → PlannerOutput 实例
+
+    原理:
+        LangChain ChatOpenAI.with_structured_output()
+        自动注入 JSON Schema 到 prompt + Pydantic 校验
+    """
+    from langchain_openai import ChatOpenAI
+    from common.config import settings
+
+    llm = ChatOpenAI(
+        model=settings.DEEPSEEK_MODEL,
+        api_key=settings.DEEPSEEK_API_KEY,
+        base_url=settings.DEEPSEEK_BASE_URL,
+        temperature=0.3,
+        max_tokens=2048,
+    )
+    return llm.with_structured_output(output_schema, method="json_mode")

@@ -44,8 +44,14 @@ planner_prompt = ChatPromptTemplate.from_messages([
 - analyze_document: 分析图片 (params: image_base64, doc_type, hint)
 - search_knowledge: 知识库搜索 (params: query)
 
-## 输出 JSON
-{{"intent": "CREATE_TASK", "sub_tasks": [{{"action": "check_calendar", "params": {{...}}}}, {{"action": "create_task", "params": {{...}}}}], "extracted_info": {{...}}}}
+## 输出字段 (严格按此 schema)
+- intent: 意图类型 (英文小写)
+- tool: 主工具名称 (如 create_task / query_weather / analyze_document)
+- entities: 提取的实体 {{"title": "...", "start_time": "...", "city": "...", ...}}
+- need_confirmation: 是否需要用户确认 (true/false)
+
+## 输出 JSON 示例
+{{"intent": "create_task", "tool": "create_task", "entities": {{"title": "产品评审", "start_time": "2026-07-15T15:00:00"}}, "need_confirmation": false}}
 """),
     ("human", "{user_input}"),
 ])

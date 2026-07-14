@@ -1,99 +1,68 @@
 """
-Node Input/Output Schema
+Node Input/Output Schema — Pydantic 结构化输出
 
-每个 Node 的职责边界:
-  Node = 流程控制 (我该调用谁? 数据该往哪走?)
-  Prompt = 思考 (ChatPromptTemplate, 只负责一个任务)
-  Tool = 执行 (操作数据库/API)
-
-数据流向:
-  AgentState.messages ──┬──► Planner ──► intent, sub_tasks
-                        ├──► Tools ────► tasks_created, actions_taken
-                        ├──► Conflict ─► conflicts_found, conflict_count
-                        ├──► Coordinator ─► suggestions, recommended_plan
-                        └──► Reply ────► final_reply
+每个 Node 的输出都是 Pydantic 模型，不是 raw JSON string。
+LangChain: llm.with_structured_output(Schema) → 类型安全
 """
-from typing import TypedDict, Annotated, Any, Literal
-from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage
+from typing import Literal, Any
+from pydantic import BaseModel, Field
 
 
-class AgentState(TypedDict):
-    """
-    林的主状态 — 所有 Node 共享
+# ============================================================
+# Node 1 — Planner 输出
+# ============================================================
 
-    messages:       LangGraph 标准消息流 (System → Human → AI → Tool → AI ...)
-    user_input:     用户最新输入
-    user_id:        用户 ID
-    session_id:     会话 ID
+class PlannerOutput(BaseModel):
+    """Planner Node: 意图识别结果"""
+    intent: Literal[
+        "create_task", "CREATE_TASK",
+        "delete_task", "DELETE_TASK",
+        "update_task", "UPDATE_TASK",
+        "query_schedule", "QUERY_SCHEDULE", "QUERY_CALENDAR",
+        "query_weather", "QUERY_WEATHER",
+        "arrange_trip", "ARRANGE_TRIP",
+        "image_analysis", "IMAGE_ANALYSIS",
+        "detect_conflict", "DETECT_CONFLICT",
+        "chat", "CHAT",
+    ] = Field(description="用户意图类型 (case-insensitive)")
 
-    === Planner 输出 ===
-    intent:         意图类型 (CREATE_TASK / QUERY_CALENDAR / ...)
-    sub_tasks:      拆解后的子任务列表
-
-    === Tools 输出 ===
-    calendar_events: 查询到的日程
-    external_data:   外部数据 (天气等)
-    tasks_created:   新创建的任务 ID 列表
-    tasks_updated:   更新的任务 ID 列表
-    actions_taken:   已执行的操作摘要
-
-    === Conflict 输出 ===
-    conflicts_found: 检测到的冲突列表
-    conflict_count:  冲突数量
-
-    === Coordinator 输出 ===
-    suggestions:     AI 建议方案
-    recommended_plan: 推荐方案 ID
-
-    === Reply 输出 ===
-    final_reply:     最终回复给用户的内容
-
-    === 错误 ===
-    error:           错误信息 (null = 正常)
-    """
-    messages: Annotated[list[BaseMessage], add_messages]
-    user_input: str
-    user_id: int
-    session_id: str
-
-    intent: str
-    sub_tasks: list[dict[str, Any]]
-
-    calendar_events: list[dict[str, Any]]
-    external_data: dict[str, Any]
-    tasks_created: list[int]
-    tasks_updated: list[int]
-    actions_taken: list[str]
-
-    conflicts_found: list[dict[str, Any]]
-    conflict_count: int
-
-    suggestions: list[dict[str, Any]]
-    recommended_plan: str
-
-    final_reply: str
-    error: str | None
+    tool: str | None = Field(default=None, description="需要调用的工具名称")
+    entities: dict[str, Any] = Field(default_factory=dict, description="提取的实体信息")
+    need_confirmation: bool = Field(default=False, description="是否需要用户确认后再执行")
 
 
-# ============ Node 边界定义 ============
+# ============================================================
+# Node 2 — Vision 输出
+# ============================================================
 
-# Planner:
-#   IN:  user_input, messages (上下文)
-#   OUT: intent, sub_tasks
+class VisionOutput(BaseModel):
+    """Document Analyzer: 文档图片分析结果"""
+    document_type: Literal[
+        "homework", "schedule", "ticket", "notice", "unknown"
+    ] = Field(description="文档类型")
 
-# Tools Executor:
-#   IN:  sub_tasks, user_id
-#   OUT: calendar_events, external_data, tasks_created, actions_taken
+    extracted_data: dict[str, Any] = Field(default_factory=dict, description="提取的结构化数据")
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="识别置信度")
 
-# Conflict Check:
-#   IN:  user_id, tasks_created
-#   OUT: conflicts_found, conflict_count
 
-# Coordinator:
-#   IN:  conflicts_found, user_input
-#   OUT: suggestions, recommended_plan
+# ============================================================
+# Node 3 — Conflict 输出
+# ============================================================
 
-# Reply:
-#   IN:  intent, actions_taken, conflicts_found, suggestions, user_input
-#   OUT: final_reply
+class ConflictOutput(BaseModel):
+    """Coordinator: 冲突检测与协调"""
+    has_conflict: bool = Field(default=False, description="是否存在时间冲突")
+    conflicts: list[str] = Field(default_factory=list, description="冲突描述列表")
+    solutions: list[str] = Field(default_factory=list, description="解决方案列表")
+
+
+# ============================================================
+# Node 4 — Reply 输出 (林的最终回复)
+# ============================================================
+
+class ReplyOutput(BaseModel):
+    """Reply Node: 林的自然语言回复"""
+    message: str = Field(description="林的自然语言回复内容")
+    action_taken: list[str] = Field(default_factory=list, description="已执行的操作摘要")
+    reminder_needed: bool = Field(default=False, description="是否需要设置提醒")
+    follow_up_question: str | None = Field(default=None, description="需要进一步确认的问题")

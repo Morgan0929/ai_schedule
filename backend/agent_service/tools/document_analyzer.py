@@ -124,20 +124,15 @@ class DocumentAnalyzer:
             f'"suggested_action": "{schema["follow_up"] or "none"}"}}'
         )
 
-        from agent_service.llm.deepseek_client import is_llm_available, get_llm_client
+        from agent_service.llm.deepseek_client import is_llm_available, get_structured_llm
         from agent_service.llm.prompts import vision_system_template
-        import json
+        from agent_service.graph.schemas import VisionOutput
 
         if not is_llm_available():
             return {"type": doc_type, "items": [], "mock": True,
                     "summary": "Document Analyzer 需要 DeepSeek API Key"}
 
         try:
-            client = get_llm_client()
-            if not client:
-                return {"type": doc_type, "items": [], "mock": True, "summary": "API 不可用"}
-
-            # System Prompt from template, User message as multimodal
             system_content = vision_system_template.format(
                 doc_type_label=schema["label"],
                 doc_fields=", ".join(schema["fields"]),
@@ -145,6 +140,15 @@ class DocumentAnalyzer:
                 doc_type=doc_type,
                 suggested_action=schema["follow_up"] or "none",
             )
+
+            # LangChain 暂不支持多模态 structured output,
+            # 用原生 API + Pydantic model_validate
+            from agent_service.llm.deepseek_client import get_llm_client
+            from common.config import Settings
+            client = get_llm_client()
+            if not client:
+                return {"type": doc_type, "items": [], "mock": True, "summary": "API 不可用"}
+
             messages = [
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": [
@@ -155,19 +159,22 @@ class DocumentAnalyzer:
                 ]},
             ]
 
-            from common.config import Settings
             resp = await client.chat.completions.create(
                 model=Settings().DEEPSEEK_MODEL, messages=messages,
                 temperature=0.3, max_tokens=2048,
+                response_format={"type": "json_object"},
             )
             raw = resp.choices[0].message.content.strip()
 
-            try: result = json.loads(raw)
-            except json.JSONDecodeError: result = _extract_json(raw)
-
-            if result:
-                logger.info(f"DocumentAnalyzer: {doc_type} → {len(result.get('items', []))} items")
-                return result
+            import json
+            try:
+                data = json.loads(raw)
+                # Pydantic 校验
+                result = VisionOutput(**data)
+                logger.info(f"DocumentAnalyzer: {result.document_type} confidence={result.confidence}")
+                return result.model_dump()
+            except Exception:
+                pass
             return {"type": doc_type, "items": [], "raw_text": raw[:500]}
 
         except Exception as e:
