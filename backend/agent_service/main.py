@@ -85,19 +85,33 @@ async def health_check():
 @app.post("/api/v1/agent/chat", response_model=Result)
 async def agent_chat(request: AgentChatRequest):
     """
-    Agent 对话入口
-
-    支持的自然语言示例：
-    - 「查看我明天的安排」
-    - 「帮我安排周五下午 3 点的产品评审」
-    - 「检查下周有没有冲突」
-    - 「下周去上海出差」
-    - 「生成明天的时间线」
-
-    工作流: Planner → Tools → Conflict → Coordinator → Reply
+    非流式对话 — 返回完整 JSON 响应
     """
     response = await AgentService.chat(request)
     return Result.success(response.model_dump())
+
+
+@app.post("/api/v1/agent/chat/stream")
+async def agent_chat_stream(request: AgentChatRequest):
+    """
+    流式对话 — SSE (Server-Sent Events) 逐 token 输出
+
+    前端调用:
+        const eventSource = new EventSource('/api/v1/agent/chat/stream');
+        eventSource.onmessage = (e) => { appendText(e.data); };
+    """
+    from fastapi.responses import StreamingResponse
+
+    async def generate():
+        async for token in AgentService.chat_stream(request):
+            yield f"data: {token}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/v1/agent/mode", response_model=Result)

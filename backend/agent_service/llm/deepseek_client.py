@@ -124,6 +124,47 @@ async def chat_completion_json(
     return {"raw": content, "parse_error": True}
 
 
+# ============ Streaming (流式输出) ============
+
+async def astream_chat(
+    messages: list[dict],
+    temperature: float = 0.7,
+    max_tokens: int = 2048,
+):
+    """
+    流式对话 — 逐 token yield
+
+    用法:
+        async for chunk in astream_chat(messages):
+            yield chunk  # str, 每个 token
+
+    Mock 模式下模拟流式逐字输出。
+    """
+    if not is_llm_available():
+        # Mock: 逐字输出
+        from agent_service.llm.mock_agent import mock_chat
+        text = await mock_chat(
+            next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+        )
+        for char in text:
+            yield char
+            import asyncio
+            await asyncio.sleep(0.02)  # 模拟打字效果
+        return
+
+    client = get_llm_client()
+    response = await client.chat.completions.create(
+        model=settings.DEEPSEEK_MODEL,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=True,
+    )
+    async for chunk in response:
+        if chunk.choices and chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
+
+
 # ============ Structured Output (Pydantic) ============
 
 def get_structured_llm(output_schema: type):

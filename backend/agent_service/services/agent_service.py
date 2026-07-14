@@ -20,9 +20,56 @@ class AgentService:
     """AI Agent 主服务"""
 
     @staticmethod
+    async def chat_stream(request: AgentChatRequest):
+        """
+        流式对话 — 执行 LangGraph 工作流 + 流式 Reply
+
+        Yields: str (逐 token, 用于 SSE)
+        """
+        session_id = request.session_id or str(uuid.uuid4())[:8]
+        tracer = start_trace(session_id=session_id,
+                             user_id=request.user_id or 0,
+                             user_input=request.message)
+
+        initial_state: AgentState = {
+            "messages": [], "user_input": request.message,
+            "user_id": request.user_id or 0, "session_id": session_id,
+            "intent": "", "sub_tasks": [],
+            "calendar_events": [], "external_data": {},
+            "conflicts_found": [], "conflict_count": 0,
+            "suggestions": [], "recommended_plan": "",
+            "final_reply": "", "actions_taken": [], "tasks_created": [], "tasks_updated": [],
+            "error": None,
+        }
+
+        try:
+            graph = get_agent_graph()
+            final_state = await graph.ainvoke(initial_state)
+
+            tracer.add_step("planner",
+                input_data={"user_input": request.message[:200]},
+                output_data={"intent": final_state.get("intent"),
+                             "sub_tasks": final_state.get("sub_tasks", [])[:5]})
+
+            # 流式输出 Reply
+            from agent_service.graph.graph import stream_reply
+            full_reply = ""
+            async for token in stream_reply(final_state):
+                full_reply += token
+                yield token
+
+            tracer.add_step("reply", output_data={"reply": full_reply[:500]})
+            tracer.finish(full_reply)
+
+        except Exception as e:
+            logger.exception(f"Agent stream error: {e}")
+            yield f"抱歉，处理时遇到问题：{e}"
+
+
+    @staticmethod
     async def chat(request: AgentChatRequest) -> AgentChatResponse:
         """
-        处理一次 Agent 对话
+        处理一次 Agent 对话（非流式）
 
         完整工作流 + Trace:
         1. Planner 解析意图   → trace
@@ -33,14 +80,12 @@ class AgentService:
         """
         session_id = request.session_id or str(uuid.uuid4())[:8]
 
-        # === 开启 Trace ===
         tracer = start_trace(
             session_id=session_id,
             user_id=request.user_id or 0,
             user_input=request.message,
         )
 
-        # 构建初始状态
         initial_state: AgentState = {
             "messages": [],
             "user_input": request.message,

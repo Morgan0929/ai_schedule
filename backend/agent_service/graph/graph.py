@@ -135,9 +135,11 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
             tag = "⭐推荐" if s.get("is_recommended") else "   "
             summary_parts.append(f"  [{s.get('plan_id', '?')}] {tag} {s.get('title', '')}")
 
-    structured_info = "\n\n".join(summary_parts) if summary_parts else ""
+    # 保存结构化信息到 state 供 streaming reply 使用
+    state["_structured_info"] = "\n\n".join(summary_parts) if summary_parts else ""
+    state["_intent"] = intent
 
-    # 使用 ChatPromptTemplate 生成林的口吻回复
+    structured_info = state["_structured_info"]
     if is_llm_available() and structured_info:
         from agent_service.llm.prompts import reply_prompt
         prompt_value = reply_prompt.invoke({
@@ -228,6 +230,53 @@ def build_agent_graph() -> StateGraph:
     workflow.add_edge("reply", END)
 
     return workflow.compile()
+
+
+# ============ Streaming Reply ============
+
+async def stream_reply(state: AgentState):
+    """
+    流式生成林的回复 — async generator, 逐 token yield
+
+    用法:
+        async for token in stream_reply(state):
+            yield f"data: {token}\n\n"  # SSE 格式
+    """
+    structured_info = state.get("_structured_info", "")
+    intent = state.get("_intent", state.get("intent", "CHAT"))
+    user_input = state.get("user_input", "")
+
+    if structured_info:
+        from agent_service.llm.prompts import reply_prompt
+        from agent_service.llm.deepseek_client import astream_chat, is_llm_available
+
+        if is_llm_available():
+            prompt_value = reply_prompt.invoke({
+                "structured_info": structured_info,
+                "intent": intent,
+                "user_input": user_input,
+            })
+            msgs = prompt_value.to_messages()
+            messages = [
+                {"role": "system", "content": msgs[0].content},
+                {"role": "user", "content": msgs[1].content},
+            ]
+            async for token in astream_chat(messages, temperature=0.7, max_tokens=1024):
+                yield token
+            return
+
+        # Fallback: mock 逐字输出
+        for char in structured_info:
+            yield char
+            import asyncio
+            await asyncio.sleep(0.02)
+    else:
+        from agent_service.llm.mock_agent import mock_chat
+        text = await mock_chat(user_input)
+        for char in text:
+            yield char
+            import asyncio
+            await asyncio.sleep(0.02)
 
 
 # 全局编译好的图实例（懒加载）
