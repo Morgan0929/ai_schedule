@@ -25,13 +25,20 @@ from agent_service.llm.mock_agent import mock_chat
 
 async def tools_executor_node(state: AgentState) -> dict[str, Any]:
     """
-    工具执行节点：遍历 planner 输出的 sub_tasks，逐一执行
+    工具执行节点 — 含 Middleware: Tool Call Limit + Tool Retry
     """
+    from agent_service.middleware.limits import ToolCallLimiter, MAX_TOOL_CALLS
+    from agent_service.middleware.retry import with_retry
+
     sub_tasks = state.get("sub_tasks", [])
     user_id = state.get("user_id", 0)
+    call_count = state.get("tool_calls_count", 0)
 
     if not sub_tasks:
         return {"calendar_events": [], "external_data": {}, "tasks_created": [], "error": None}
+
+    limiter = ToolCallLimiter()
+    limiter.count = call_count  # 恢复当前计数
 
     calendar_events = []
     external_data = {}
@@ -39,10 +46,23 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
     actions_taken = []
 
     for task in sub_tasks:
+        # === Middleware: Tool Call Limit ===
+        if not limiter.allow():
+            actions_taken.append(
+                f"[LIMIT] 已达最大工具调用次数({MAX_TOOL_CALLS})，跳过后面的操作"
+            )
+            break
+
         action = task.get("action", "")
         params = task.get("params", {})
 
-        result = await execute_tool(action, params, user_id)
+        # === Middleware: Tool Retry (with_retry 包装) ===
+        @with_retry(max_attempts=2, base_delay=1.0)
+        async def _call_with_retry():
+            return await execute_tool(action, params, user_id)
+
+        result = await _call_with_retry()
+        limiter.record(action)
 
         if result.get("success"):
             tool_result = result.get("result", {})
@@ -66,6 +86,8 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
         "external_data": external_data,
         "tasks_created": tasks_created,
         "actions_taken": actions_taken,
+        "tool_calls_count": limiter.count,
+        "_tool_history": limiter.history,
         "error": None,
     }
 
@@ -156,6 +178,17 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
         final_reply = f"{structured_info}"
     else:
         final_reply = await mock_chat(state.get("user_input", ""))
+
+    # === Middleware: Todo Extraction ===
+    from agent_service.middleware.todo_extractor import TodoExtractor
+    todos = await TodoExtractor.extract(user_input)
+    if todos:
+        # 追加待办提示
+        todo_text = "\n\n📋 自动识别到的待办:\n" + "\n".join(
+            f"  • {t['task']}" + (f" (截止: {t['deadline']})" if t.get('deadline') else "")
+            for t in todos[:5]
+        )
+        final_reply = (final_reply or "") + todo_text
 
     return {"final_reply": final_reply, "error": None}
 

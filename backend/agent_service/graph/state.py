@@ -43,5 +43,10 @@ class AgentState(TypedDict, total=False):
     _structured_info: str
     _intent: str
 
+    # Middleware
+    tool_calls_count: int            # Tool Call Limit
+    _tool_history: list[str]         # 工具调用历史
+    _compressed_messages: bool       # 是否已压缩消息
+
     # 错误
     error: str | None

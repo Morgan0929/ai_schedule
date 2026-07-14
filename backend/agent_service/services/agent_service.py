@@ -39,6 +39,7 @@ class AgentService:
             "conflicts_found": [], "conflict_count": 0,
             "suggestions": [], "recommended_plan": "",
             "final_reply": "", "actions_taken": [], "tasks_created": [], "tasks_updated": [],
+            "tool_calls_count": 0, "_tool_history": [], "_compressed_messages": False,
             "error": None,
         }
 
@@ -100,9 +101,8 @@ class AgentService:
             "suggestions": [],
             "recommended_plan": "",
             "final_reply": "",
-            "actions_taken": [],
-            "tasks_created": [],
-            "tasks_updated": [],
+            "actions_taken": [], "tasks_created": [], "tasks_updated": [],
+            "tool_calls_count": 0, "_tool_history": [], "_compressed_messages": False,
             "error": None,
         }
 
