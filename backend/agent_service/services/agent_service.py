@@ -136,21 +136,40 @@ class AgentService:
         }
 
         try:
-            # === Load Memory Context ===
+            # === Memory: Load + Summary Check + Prune ===
             from agent_service.memory.profile import ProfileManager
             from agent_service.memory.working import WorkingMemory
-            from agent_service.memory.memories import MemoryManager as UserMemory
+            from agent_service.memory.summarizer import SummaryNode, should_summarize
+            from agent_service.memory.pruner import prune_messages, filter_tool_messages
 
-            # 注入用户画像到 System Prompt (如果有的话)
-            profile_text = await ProfileManager.get_context_text(request.user_id or 0)
+            user_id = request.user_id or 0
+
+            # 注入用户画像
+            profile_text = await ProfileManager.get_context_text(user_id)
             if profile_text:
                 from langchain_core.messages import SystemMessage
                 initial_state["messages"].append(SystemMessage(content=profile_text))
+
+            # 注入近期摘要
+            recent_summary = await SummaryNode.load_recent(user_id, days=7)
+            if recent_summary:
+                from langchain_core.messages import SystemMessage
+                initial_state["messages"].append(SystemMessage(content=recent_summary))
 
             # 恢复工作记忆
             working = await WorkingMemory.get(session_id)
             if working and working.get("intent"):
                 initial_state["intent"] = working.get("intent", "")
+
+            # Token 检查: 超过阈值则触发摘要
+            if should_summarize(initial_state["messages"]):
+                logger.info("Token threshold exceeded, running Summary Node...")
+                summary = await SummaryNode.summarize(initial_state["messages"], user_id)
+                if summary:
+                    # 保存摘要
+                    await SummaryNode.save_to_db(user_id, summary)
+                    # 裁剪消息
+                    initial_state["messages"] = prune_messages(initial_state["messages"])
 
             # 执行 LangGraph 工作流
             graph = get_agent_graph()
