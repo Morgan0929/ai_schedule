@@ -1,562 +1,253 @@
-# AI Schedule Agent（日程智能助手）— 项目蓝图
+# 林 (Lin) — AI 个人事务秘书 项目蓝图
 
-> 本文档为 AI 助手的核心上下文文件，每次回答前必须阅读。包含完整的数据栈、架构、目标、框架定义。
+> 本文档为 AI 助手的核心上下文文件，每次回答前必须阅读。
 
 ---
 
 ## 一、项目概述
 
-**项目名称**：AI Schedule Agent（日程智能助手）  
+**项目名称**：林 — AI 个人事务秘书  
 **项目根目录**：`D:/AIagent日程规划/`  
-**项目结构**：`backend/` (Python AI后端) + `mobile/` (Flutter手机App) + `venv/` (Python虚拟环境)
 **代码仓库**：https://gitee.com/<GITEE_USERNAME>/ai-schedule-management  
-**项目类型**：Python AI Agent + 日程管理系统 + 数据采集平台 + 移动端应用
+**远程数据库**：<REMOTE_DB_HOST>:5432 (PostgreSQL 16.14, Ubuntu aarch64)  
+**项目类型**：AI Agent 日程管理系统 + 个人事务助手
 
-### 核心业务场景
-本项目是一个 **AI Agent 日程管理系统**，核心特点是 **AI 自动感知冲突、协调决策、管理时间线**，而非简单的 CRUD 日历应用。
+### Agent 人格
 
-### 核心能力
-| 能力 | 描述 |
-|------|------|
-| 爬虫获取外部数据 | 自动采集会议、航班、天气等外部信息 |
-| 自动生成时间线 | 将零散任务整理为可视化时间线 |
-| AI 对话管理行程 | 自然语言交互，Agent 理解意图并操作日程 |
-| AI 冲突检测 | 多任务时间重叠自动发现 |
-| AI 协调决策 | 冲突时给出多方案，用户选择或 AI 自动决策 |
-| 手机 APP 使用 | Flutter 跨平台移动端 |
-
-### 典型交互场景
-
-```
-用户：下周帮我安排上海出差
-
-AI：已发现：
-    1. 3月10日 北京客户会议
-    2. 3月11日 上海出差
-    3. 3月12日 产品发布会
-
-存在冲突：
-    上海出差与产品发布会时间重叠
-
-解决方案：
-    方案A：提前一天飞上海
-    方案B：线上参加发布会
-    方案C：委托张三代为出席
-```
+**名字**：林  
+**性格**：随性、开朗、积极、有亲和力  
+**风格**：自然、轻松、温暖，像一个熟悉用户习惯的私人助理  
+**职责**：只处理个人事务管理，无关话题礼貌拒绝
 
 ---
 
 ## 二、数据栈 (Data Stack)
 
-| 层级 | 技术 | 用途 |
-|------|------|------|
-| 语言 | Python 3.11+ | 后端核心语言（从 Java 转型） |
-| 后端框架 | FastAPI | 类似 Spring Boot，类型注解完整，AI 生态最好 |
-| 数据验证 | Pydantic v2 | 请求/响应模型验证，类似 Java Bean Validation |
-| ORM | SQLAlchemy 2.0 | 异步数据库操作 |
-| 关系数据库 | PostgreSQL 16 | 用户、行程、时间线、AI 日志、Agent 状态、爬虫数据 |
-| 缓存/队列 | Redis 7.x | 缓存、会话、任务队列、消息队列 |
-| 向量数据库 | Qdrant | RAG 知识库（比 Milvus 简单） |
-| 嵌入模型 | BGE-M3 | 中文嵌入向量生成 |
-| LLM | DeepSeek V4 / DeepSeek R1 | 成本低、中文强、API 便宜 |
-| Agent 框架 | LangGraph | 任务编排、状态图、工具调用（最值得学） |
-| 爬虫 | requests + BeautifulSoup4 + Playwright | 4 个爬虫: weather(httpx) / news(BS4+lxml解析HTML) / calendar(httpx+离线) / dynamic(Playwright渲染JS) |
-| 定时任务 | APScheduler | 定时自动采集数据 |
-| 语音 | Whisper（输入） + CosyVoice（输出） | 后期升级语音交互 |
-| 移动端 | Flutter | 一套代码 Android + iOS |
-| 容器化 | Docker + Docker Compose | 全部容器化部署 |
-| 反向代理 | Nginx | 生产环境前端 |
+| 层级 | 技术 | 实际版本 | 用途 |
+|------|------|---------|------|
+| 语言 | Python | 3.12.5 | 后端核心语言 |
+| 后端框架 | FastAPI | 0.136.3 | 5 服务 API |
+| 数据验证 | Pydantic v2 | 2.13.4 | LLM 结构化输出 + DTO |
+| ORM | SQLAlchemy 2.0 | 2.0.50 | 异步 DB 操作 |
+| 关系数据库 | PostgreSQL | 16.14 (远程) | 全部持久化数据 |
+| 缓存 | Redis | 7.x (本地) | 工作记忆 (TTL=30min) |
+| LLM | DeepSeek | deepseek-chat | API 调用 |
+| Agent 框架 | LangGraph | 1.2.5 | 5 节点状态图编排 |
+| Agent SDK | LangChain | 1.3.9 | ChatPromptTemplate |
+| 可观测 | LangSmith | 0.8.15 | 飞行记录仪 |
+| 爬虫 | requests + BS4 + Playwright | — | 4 个注册爬虫 |
+| 定时任务 | APScheduler | 3.11.2 | 爬虫定时采集 |
+| 向量数据库 | Qdrant | 内存回退 | RAG 检索 |
+| 移动端 | Flutter | 待开发 | 手机 App |
 
 ---
 
-## 三、架构 (Architecture)
+## 三、架构
 
-### 3.1 微服务拆分（企业级标准）
+### 3.1 目录结构
 
 ```
 D:/AIagent日程规划/
-├── venv/                          # Python 3.12 虚拟环境
-├── .env / .env.example            # 环境变量 (API Key等)
-├── .gitignore
+├── venv/                              Python 虚拟环境
+├── .env                               环境变量 (gitignored)
 │
-├── backend/                       # Python AI 后端
-│   ├── CLAUDE.md                  # ← 本文件（项目核心上下文）
-│   ├── README.md
-│   ├── docker-compose.yml
-│   ├── requirements.txt (各服务独立)
+├── backend/                           Python AI 后端
+│   ├── CLAUDE.md                      项目蓝图
+│   ├── common/                        公共模块
+│   │   ├── config.py                  pydantic-settings 配置
+│   │   ├── database.py                SQLAlchemy async 引擎
+│   │   ├── schemas/                   Pydantic 数据验证 (7 models)
+│   │   └── utils/                     JWT / bcrypt
 │   │
-│   ├── common/                    # 公共模块
-│   │   ├── config.py / database.py / exceptions.py
-│   │   ├── schemas/               # Pydantic 数据验证模型
-│   │   └── utils/                 # JWT / bcrypt
-│   │
-│   ├── app_service/     8000      # API 网关 & 用户认证
-│   ├── agent_service/   8002      # AI Agent (LangGraph + DeepSeek)
-│   ├── timeline_service/ 8003     # 时间线 & 冲突检测
-│   ├── crawler_service/ 8001      # 爬虫数据采集
-│   ├── rag_service/     8004      # RAG 知识库
-│   └── personal/                  # 本地个人脚本(不提交)
+│   ├── app_service/         :8000     API 网关 & 用户认证
+│   ├── agent_service/       :8002     AI Agent 核心
+│   │   ├── graph/            LangGraph 节点 (planner/tools/conflict/reply)
+│   │   ├── llm/              DeepSeek Client + ChatPromptTemplate
+│   │   ├── tools/            Document Analyzer
+│   │   ├── memory/           Memory System (3层)
+│   │   ├── middleware/       Tool Limit / Retry
+│   │   ├── services/         AgentService
+│   │   └── utils/            Tracer (LangSmith) + Coordinator
+│   ├── timeline_service/    :8003     任务 CRUD + 冲突检测 + 课表
+│   ├── crawler_service/     :8001     爬虫 (4 spiders) + APScheduler
+│   ├── rag_service/         :8004     RAG 知识库
+│   └── personal/                     本地脚本 (gitignored)
 │
-└── mobile/                        # Flutter 手机 App
-    ├── lib/                       # Dart 源码
-    ├── android/ / ios/
-    └── pubspec.yaml
+└── mobile/                           Flutter App (待开发)
 ```
 
-> **注意**：服务目录使用下划线（`app_service`）而非连字符，因为 Python 无法从含连字符的目录 import 包。
-> 运行方式：从项目根目录 `python backend/app_service/main.py`
-
-### 3.2 系统架构图
+### 3.2 Agent 工作流
 
 ```
-  ┌──────────┐     HTTP/WebSocket     ┌──────────────────────────┐
-  │  Flutter  │ ◄──────────────────► │  Python AI 后端           │
-  │  手机 App │                       │  (backend/)              │
-  │ (mobile/) │                       │                          │
-  └──────────┘                       │  ┌────────────────────┐  │
-                                     │  │ app_service :8000  │  │
-                                     │  │ agent_service:8002 │  │
-                                     │  │ timeline_svc :8003 │  │
-                                     │  │ crawler_svc  :8001 │  │
-                                     │  │ rag_service  :8004 │  │
-                                     │  └────────┬───────────┘  │
-                                     │           │              │
-                                     │  ┌────────▼───────────┐  │
-                                     │  │ PostgreSQL 16       │  │
-                                     │  │ Redis 7             │  │
-                                     │  │ Qdrant (向量数据库)  │  │
-                                     │  └────────────────────┘  │
-                                     └──────────────────────────┘
-
-  手机只是客户端 — AI/爬虫/数据库全部在后端运行
-```
-
-### 3.3 分层架构（以 agent-service 为例）
-
-```
-┌──────────────────────────────────────────┐
-│            FastAPI Router 层             │  ← REST API 入口
-├──────────────────────────────────────────┤
-│            LangGraph StateGraph          │  ← Agent 编排引擎
-├──────────────────────────────────────────┤
-│         Tools / Function Calling         │  ← 工具调用层
-├──────────────────────────────────────────┤
-│            LLM Client 层                 │  ← DeepSeek API 封装
-├──────────────────────────────────────────┤
-│         Repository / Model 层            │  ← 数据访问 (SQLAlchemy)
-├──────────────────────────────────────────┤
-│         Infrastructure 层                │  ← Redis、Qdrant、外部服务调用
-└──────────────────────────────────────────┘
-```
-
-### 3.4 Agent 工作流（LangGraph 状态图）
-
-```
-用户输入
+用户输入 → Memory Load (画像+摘要) → Token Check → [超阈值] Summary Node
     │
     ▼
-┌──────────┐   ┌─────────────────────────┐
-│ Planner  │──►│ AgentTracer (AI Trace)  │  ← 全程记录每一步
-└────┬─────┘   │ 记录: 输入/输出/耗时/成功 │
-     │         └─────────────────────────┘
-     ▼
-┌──────────────┐
-│ 调用工具      │  ← 查询日历 / 创建任务 / 查天气
-└────┬─────────┘
-     │
-     ▼
-┌──────────────┐
-│ 冲突检测      │  ← if task1.end > task2.start → 冲突
-└────┬─────────┘
-     │
-     ▼
-┌──────────────┐
-│ AI 协调决策   │  ← 生成 A/B/C 多方案 + 推荐最佳
-└────┬─────────┘
-     │
-     ▼
-┌──────────────┐
-│ 生成回复      │  ← 格式化输出给用户
-└──────────────┘
-     │
-     ▼
-  AgentTracer.finish()  ← 持久化到 PostgreSQL agent_session 表
+Planner Node      ChatPromptTemplate → Pydantic(PlannerOutput)
+    │
+    ▼
+Tools Executor    Tool Call Limit + Tool Retry (with_retry)
+    │
+    ▼
+Conflict Check    if task_a overlaps task_b → conflicts_found
+    │
+    ▼
+Coordinator Node  ChatPromptTemplate → Pydantic(ConflictOutput) → A/B/C 方案
+    │
+    ▼
+Reply Node        ChatPromptTemplate → stream_reply() → SSE 流式输出
+    │
+    ▼
+Memory Manager    Extract→Save (PG) + Working Memory clear (Redis)
+    │
+    ▼
+LangSmith Trace   飞行记录仪 (异步后台, 失败不影响核心)
 ```
 
-Trace 输出示例:
+### 3.3 Agent 分层规则
+
 ```
-[Trace:a1b2c3] [Plan] planner      [OK] 9349ms → intent: CREATE_TASK
-[Trace:a1b2c3] [Tool] tools        [OK] 9349ms → tasks_created: [1]
-[Trace:a1b2c3] [Reply] reply        [OK] 9349ms
-[Trace:a1b2c3] 会话结束 — 3步 耗时9349ms OK
+Node = 流程控制 (我该调用谁? 数据该往哪走?)
+Prompt = 思考 (ChatPromptTemplate, 每个 Node 独立)
+Tool = 执行 (操作数据库/API)
+Middleware = 拦截 (ToolCallLimit / Retry / Summarize)
+
+换模型 (Qwen/GPT-4V): 只改 deepseek_client.py
+修改图片识别: 只改 tools/document_analyzer.py
+修改冲突逻辑: 只改 prompts.py 的 coordinator_prompt
 ```
 
 ---
 
-## 四、目标 (Goals)
+## 四、当前进度
 
-### 4.1 总体目标
-构建一个接近真实 AI Agent 产品架构的项目，覆盖 **数据采集 → 时间线管理 → AI 冲突检测 → AI 协调决策 → 移动端交互** 的全链路，作为从资深 Java 后端转型 AI 应用开发的作品集项目。
+| Phase | 状态 | 交付 |
+|-------|------|------|
+| Phase 1 — 骨架 | ✅ | FastAPI 5服务 + common |
+| Phase 2 — CRUD | ✅ | User/Task CRUD + JWT + PostgreSQL |
+| Phase 3 — 爬虫 | ✅ | 4爬虫 (BS4/Playwright/httpx) |
+| Phase 4 — Agent | ✅ | LangGraph + Pydantic + 流式SSE + 中间件 + 记忆系统 |
+| Phase 5 — RAG | ✅ | SimpleEmbedding + 内存向量 |
+| Phase 6 — Flutter | 🔲 | 移动端 |
+| Phase 7 — 部署 | 🔲 | Docker + Nginx |
 
-### 4.2 阶段目标
+### Agent 核心能力清单
 
-| 阶段 | 周期 | 目标 | 产出 |
-|------|------|------|------|
-| **Phase 1** | 2 周 | Python 基础 + FastAPI | 项目骨架、Pydantic 模型、SQLAlchemy 配置 |
-| **Phase 2** | 3 周 | 数据库搭建 | PostgreSQL 建表、Redis 集成、基础 CRUD |
-| **Phase 3** | 3 周 | 爬虫服务 | BeautifulSoup → Playwright、APScheduler 定时采集 |
-| **Phase 4** | 4 周 | AI Agent 核心 | DeepSeek 接入、LangGraph 编排、Function Calling、冲突检测引擎 |
-| **Phase 5** | 2 周 | RAG 知识库 | Qdrant 部署、BGE-M3 嵌入、文档检索 |
-| **Phase 6** | 2 周 | Flutter APP | 移动端完成、端到端联调 |
-| **Phase 7** | — | 部署上线 | Docker 容器化、Nginx 配置、CI/CD |
+| 能力 | 实现 |
+|------|------|
+| 自然语言 → 结构化输出 | PlannerOutput (Pydantic) |
+| 工具调用 + 限流 | ToolCallLimiter (max 5) + Retry |
+| 冲突检测 + 协调 | ConflictDetector + Coordinator Node |
+| 流式 SSE 输出 | stream_reply() → EventSource |
+| 结构化记忆 | 3层 (Working/Short/Long) + Summary Node |
+| AI Trace | LangSmith + 本地 Tracer |
+| 文档分析 | Document Analyzer (7种文档类型) |
+| 消息裁剪 | Token Counter + prune_messages + 重要消息保护 |
+| 安全 | Key不放APP / AI不直连DB / 手机只是客户端 |
 
-### 4.3 当前进度
+---
 
-| Phase | 状态 | 关键交付 |
-|-------|------|----------|
-| Phase 1 — 骨架 | ✅ | FastAPI 5服务 + common模块 |
-| Phase 2 — CRUD | ✅ | User/Task CRUD + bcrypt + JWT + PostgreSQL + SQLite |
-| Phase 3 — 爬虫 | ✅ | 4爬虫(BS4/Playwright/httpx) + APScheduler |
-| Phase 4 — Agent | ✅ | LangGraph + DeepSeek + Pydantic结构化输出 + 流式SSE |
-| Phase 5 — RAG | ✅ | SimpleEmbedding + 内存向量 + Agent集成 |
-| Phase 6 — Flutter | 🔲 | 移动端 (Flutter + Dart) |
-| Phase 7 — 部署 | 🔲 | Docker Compose + Nginx |
+## 五、数据库 (PostgreSQL)
 
-### Agent 架构详情
+**服务器**：<REMOTE_DB_HOST>:5432  
+**数据库**：<DB_NAME> | **用户**：<DB_USER>  
+**表**：10 张
+
+| 表 | 用途 |
+|------|------|
+| sys_user | 用户认证 |
+| task | 任务/行程 |
+| timeline | 时间线 |
+| conflict | 冲突记录 |
+| schedule | 课表 |
+| crawl_data | 爬虫数据 |
+| agent_session | Agent Trace |
+| user_profile | 用户画像 (key/value/confidence) |
+| conversation_summary | 短期摘要 (7天) |
+| user_memory | 通用记忆 (habit/preference/fact/event) |
+
+---
+
+## 六、API 设计
+
+### Agent 对话
 
 ```
-林 Agent
-├── System Prompt: messages[0] = LIN_SYSTEM_PROMPT (固定人格)
-├── Planner Node: ChatPromptTemplate → Pydantic(PlannerOutput) → intent/sub_tasks
-├── Tools: 16 个工具 (calendar/task/weather/travel/vision/knowledge)
-├── Coordinator Node: ChatPromptTemplate → Pydantic(ConflictOutput) → solutions
-└── Reply Node: ChatPromptTemplate → stream_reply() → SSE 流式输出
-
-每个 Node 独立 ChatPromptTemplate + Pydantic Structured Output
-Node=流程 Prompt=思考 Tool=执行
-换模型(Qwen/GPT-4V)只改 deepseek_client.py
+POST /api/v1/agent/chat          非流式 JSON
+POST /api/v1/agent/chat/stream   SSE 流式 (EventSource)
+GET  /api/v1/agent/mode          当前模式 (llm/mock)
 ```
 
-### 4.4 V1 MVP 范围（当前焦点）
+### 用户认证 (app_service:8000)
 
-**做**：
-- ✅ 用户登录/注册
-- ✅ 手动创建/删除/查询任务
-- ✅ AI 添加/删除/修改任务
-- ✅ 时间冲突检测
-- ✅ 课表爬取 + 双层存储
-- 🔲 手机 App (Flutter)
+```
+POST /api/v1/auth/register /login
+GET  /api/v1/users/me  /users
+```
 
-**不做**：
-- ❌ 爬100个网站
-- ❌ 自训练/自部署大模型
-- ❌ 多 Agent 协作
+### 任务 CRUD (timeline_service:8003)
 
-### 4.5 安全原则
+```
+GET/POST/PUT/DELETE /api/v1/tasks
+```
 
-| # | 原则 | 实现 |
+### 爬虫 (crawler_service:8001)
+
+```
+GET  /api/v1/crawl/spiders       列出爬虫
+POST /api/v1/crawl/trigger       手动触发
+GET  /api/v1/crawl/records       查询记录
+POST /api/v1/crawl/schedule/refresh  课表刷新(延迟双删)
+```
+
+### RAG (rag_service:8004)
+
+```
+POST /api/v1/rag/documents       上传文档
+GET  /api/v1/rag/search?q=       语义搜索
+```
+
+---
+
+## 七、Middleware 层
+
+| Middleware | 作用 |
+|------|------|
+| ToolCallLimiter | max 5次工具调用, 防死循环 |
+| with_retry | Tool 失败→指数退避重试 |
+| model_retry | LLM 超时/限流→重试→Fallback |
+| ChatSummarizer | 对话 >20轮压缩为摘要 |
+| TodoExtractor | 规则+LLM提取待办 |
+| Token Counter | 超6000 token触发 Summary |
+| Message Pruner | System永久 + 重要(score>0.7) + 最近20轮 |
+
+---
+
+## 八、Memory System
+
+```
+Working  (Redis, TTL=30min) : 当前对话状态
+Short    (PG, 7天)           : conversation_summary
+Long     (PG)                : user_profile + user_memory
+Vector   (Qdrant, 未来)      : 语义搜索
+```
+
+**记忆规则**：
+- ✅ 保存：固定习惯/课程/工作规律/偏好 (多次确认→置信度↑)
+- ❌ 不保存：临时抱怨/一次性事件/敏感信息/随口表达
+
+---
+
+## 九、安全原则
+
+| # | 原则 | 状态 |
 |---|------|------|
-| 1 | DeepSeek Key 不放 APP | `.env` 仅后端，Flutter→后端→DeepSeek |
-| 2 | AI 不直操作 DB | Agent → Function → Service → Repository → DB |
-| 3 | 不自己部署大模型 | DeepSeek API (deepseek-chat) |
-| 4 | AI 全链路 Trace | `AgentTracer` 记录每一步决策 |
-| 5 | 手机只是客户端 | AI/爬虫/数据库全部在后端运行 |
+| 1 | DeepSeek Key 不放 APP | ✅ `.env` 仅后端 |
+| 2 | AI 不直操作 DB | ✅ Agent→Function→Service→Repo→DB |
+| 3 | 不自己部署大模型 | ✅ DeepSeek API |
+| 4 | AI 全链路 Trace | ✅ LangSmith + AgentTracer |
+| 5 | 手机只是客户端 | ✅ AI/爬虫/DB 全部在后端 |
 
 ---
 
-## 五、框架 (Framework)
-
-### 5.1 后端框架
-
-```txt
-# FastAPI 核心
-fastapi==0.115.*
-uvicorn[standard]==0.34.*
-pydantic==2.*
-pydantic-settings==2.*
-
-# 数据库
-sqlalchemy[asyncio]==2.0.*
-asyncpg==0.30.*           # PostgreSQL 异步驱动
-alembic==1.14.*           # 数据库迁移
-
-# Redis
-redis==5.2.*
-hiredis==2.*              # Redis 高性能解析器
-
-# 向量数据库
-qdrant-client==1.12.*
-
-# LLM / Agent
-langgraph==0.2.*
-langchain==0.3.*
-openai==1.*               # DeepSeek 兼容 OpenAI SDK
-
-# 爬虫
-requests==2.32.*
-beautifulsoup4==4.12.*
-playwright==1.50.*
-
-# 定时任务
-apscheduler==3.10.*
-
-# 工具
-httpx==0.28.*             # 异步 HTTP 客户端（服务间调用）
-python-jose[cryptography]==3.3.*  # JWT 认证
-```
-
-### 5.2 编码规范
-- 包名：`ai_schedule_agent.*` 各服务内
-- 统一返回格式：`{"code": 200, "message": "success", "data": {...}}`
-- 异常处理：FastAPI `exception_handler` 全局异常处理
-- 日志：Python `logging` + `structlog`（结构化日志）
-- 配置：`pydantic-settings` 多环境（dev / prod）
-- 类型注解：所有函数必须标注参数和返回值类型
-- 异步优先：FastAPI 路由和数据库操作一律 `async/await`
-
-### 5.3 API 风格对比（Java → Python）
-
-```java
-// Java Spring Boot
-@PostMapping("/task")
-public Result createTask(@RequestBody TaskDTO dto) {
-    return Result.success(taskService.createTask(dto));
-}
-```
-
-```python
-# Python FastAPI
-@router.post("/task")
-async def create_task(dto: TaskCreateDTO) -> Result[TaskDTO]:
-    task = await task_service.create_task(dto)
-    return Result.success(task)
-```
-
----
-
-## 六、核心业务模型
-
-### 6.1 实体关系
-
-```
-User (用户)
-  ├── id, username, email, password_hash
-  ├── role (ADMIN/USER)
-  │
-  ├── 1 : N → Task (任务/行程)
-  │     ├── id, user_id, title, description
-  │     ├── start_time, end_time
-  │     ├── priority (HIGH/MEDIUM/LOW)
-  │     ├── status (PENDING/IN_PROGRESS/COMPLETED/CANCELLED)
-  │     ├── location (地点)
-  │     ├── category (MEETING/TRIP/PERSONAL/WORK)
-  │     └── created_at, updated_at
-  │
-  ├── 1 : N → Timeline (时间线)
-  │     ├── id, user_id, date
-  │     ├── events: JSON[]  (排序后的事件列表)
-  │     └── generated_by: AI/MANUAL
-  │
-  ├── 1 : N → Conflict (冲突)
-  │     ├── id, user_id
-  │     ├── task_a_id, task_b_id
-  │     ├── overlap_start, overlap_end
-  │     ├── severity (CRITICAL/WARNING/INFO)
-  │     ├── resolution (建议方案)
-  │     └── resolved: bool
-  │
-  ├── 1 : N → AgentSession (Agent 会话)
-  │     ├── id, user_id
-  │     ├── messages: JSON[]
-  │     ├── state: JSON (LangGraph 状态)
-  │     └── created_at
-  │
-  └── 1 : N → CrawlData (爬虫数据)
-        ├── id, user_id
-        ├── source (航班/天气/新闻)
-        ├── raw_data: JSON
-        └── created_at
-```
-
-### 6.2 冲突检测规则
-
-| 规则 | 描述 |
-|------|------|
-| **时间重叠** | `task_a.end_time > task_b.start_time` → 冲突 |
-| **优先级排序** | HIGH > MEDIUM > LOW，低优先级让位高优先级 |
-| **地点冲突** | 同一时间段不同地点 → 物理不可达（需要交通时间） |
-| **缓冲时间** | 相邻任务之间至少 15 分钟缓冲 |
-| **AI 决策权重** | 优先级(40%) + 历史习惯(30%) + 参与人数(20%) + 可调整性(10%) |
-
-### 6.3 AI 协调决策模型
-
-```
-输入：冲突列表 + 用户偏好 + 历史数据
-  ↓
-AI 分析维度：
-  1. 任务重要性（能否延期？能否委托？能否取消？）
-  2. 参与者影响（多少人受影响？是否有外部客户？）
-  3. 时间敏感性（截止日期、不可变更性）
-  4. 用户历史选择偏好
-  ↓
-输出：
-  方案A（推荐）：具体调整方案 + 影响分析
-  方案B：备选方案 + 影响分析
-  方案C：兜底方案 + 影响分析
-```
-
-### 6.4 课表存储架构（Redis + PostgreSQL 双层）
-
-```
-[GDUT 爬虫 / 手动刷新]
-        │
-        ▼
-  POST /api/v1/crawl/schedule/refresh
-        │
-  延迟双删 (Cache-Aside Double-Delete):
-  ① 删 Redis (本周7天)
-  ② 更新 PostgreSQL (删旧 + 插新)
-  ③ sleep 500ms (等并发完成)
-  ④ 再删 Redis (清脏数据)
-  ⑤ 预热今日数据
-        │
-   ┌────┴────┐
-   ▼         ▼
-[Redis]   [PostgreSQL]
- TTL=1d    schedule 表
- 今日视图   持久化+学期清理
-```
-
-### 6.5 时间线数据结构
-
-```json
-{
-  "date": "2026-03-11",
-  "events": [
-    {
-      "time": "09:00",
-      "duration": 120,
-      "event": "客户会议",
-      "category": "MEETING",
-      "location": "北京办公室",
-      "priority": "HIGH"
-    },
-    {
-      "time": "13:00",
-      "duration": 180,
-      "event": "飞往上海",
-      "category": "TRIP",
-      "location": "首都机场→虹桥机场"
-    },
-    {
-      "time": "18:00",
-      "duration": 90,
-      "event": "晚餐",
-      "category": "PERSONAL",
-      "location": "上海外滩"
-    }
-  ]
-}
-```
-
----
-
-## 七、API 设计（初版）
-
-### 7.1 Agent 对话 API
-
-```
-POST /api/v1/agent/chat
-  Request:  { "message": "帮我安排下周上海出差", "session_id": "uuid" }
-  Response: { "reply": "...", "conflicts": [...], "suggestions": [...] }
-```
-
-### 7.2 时间线 API
-
-```
-GET    /api/v1/timeline?date=2026-03-11
-POST   /api/v1/timeline/generate   ← AI 自动生成
-PUT    /api/v1/timeline/{id}
-```
-
-### 7.3 任务 CRUD API
-
-```
-GET    /api/v1/tasks?start=...&end=...
-POST   /api/v1/tasks
-PUT    /api/v1/tasks/{id}
-DELETE /api/v1/tasks/{id}
-```
-
-### 7.4 冲突检测 API
-
-```
-GET    /api/v1/conflicts?start=...&end=...
-POST   /api/v1/conflicts/resolve/{id}  ← AI 协调解决
-```
-
----
-
-## 八、开发工具配置
-
-| 工具 | 用途 |
-|------|------|
-| VSCode | 代码编辑器 |
-| Claude Code | AI 辅助编码 |
-| DeepSeek V4 | 方案设计 + 模型调用 |
-| GitHub Copilot | 代码补全 |
-
----
-
-## 九、部署架构
-
-```
-docker-compose.yml
-├── nginx (80:80)
-├── app-service (8000)
-├── crawler-service (8001)
-├── agent-service (8002)
-├── timeline-service (8003)
-├── rag-service (8004)
-├── postgres (5432)
-├── redis (6379)
-└── qdrant (6333)
-```
-
-### 爬虫注册表
-
-| 爬虫 | 技术栈 | 数据源 |
-|------|--------|--------|
-| `weather` | httpx | wttr.in JSON API |
-| `news` | **BeautifulSoup4 + lxml** | HackerNews HTML 页面解析 |
-| `calendar` | httpx + 离线回退 | nager.at API / 中国法定节假日 |
-| `dynamic` | **Playwright (Chromium headless)** | 任意 JS 渲染页面 |
-
----
-
-## 十、与电商平台项目的差异
-
-| 维度 | 电商平台 | AI Schedule Agent |
-|------|----------|-------------------|
-| 语言 | Java / Spring Boot | Python / FastAPI |
-| 核心 | CRUD + 业务规则 | AI Agent + 智能决策 |
-| ORM | MyBatis-Plus | SQLAlchemy 2.0 async |
-| 数据库 | MySQL 8.0 | PostgreSQL 16 |
-| 向量数据库 | 无 | Qdrant |
-| Agent 框架 | 无 | LangGraph |
-| 爬虫 | 无 | BeautifulSoup4 + Playwright |
-| 移动端 | Electron 桌面端 | Flutter 移动端 |
-| 知识库 | 无 | RAG + BGE-M3 |
-
----
-
-## 十一、文档维护说明
-
-> **重要**：本文件是项目的「大脑」，所有核心决策和架构信息在此维护。
-> 每次修改项目结构、新增服务、调整业务规则后，必须同步更新本文件。
-> AI 助手的第一个动作始终是阅读本文件，确保上下文一致。
-
----
-
-*创建日期：2026-06-13*
-*维护者：Claude AI Assistant & 项目负责人*
+*最后更新：2026-07-15*
+*维护者：Claude AI Assistant*
