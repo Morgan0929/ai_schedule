@@ -67,8 +67,37 @@ class AgentService:
             yield f"抱歉，处理时遇到问题：{e}"
 
 
-    @staticmethod
-    async def chat(request: AgentChatRequest) -> AgentChatResponse:
+async def _extract_and_save_memories(user_input: str, ai_reply: str, user_id: int):
+    """Memory Manager: 对话结束后异步提取有价值信息"""
+    try:
+        from agent_service.memory.memories import MemoryManager
+        from agent_service.memory.profile import ProfileManager
+
+        # 提取值得保存的记忆
+        memories = await MemoryManager.extract_from_conversation(user_input, ai_reply)
+        for mem in memories:
+            await MemoryManager.save(
+                user_id=user_id,
+                memory_type=mem["type"],
+                content=mem["content"],
+                importance=mem["importance"],
+                confidence=mem["confidence"],
+                source="agent",
+            )
+
+        # 提取用户画像 (communication style)
+        if len(user_input) < 20:
+            await ProfileManager.set(user_id, "reply_style", "short",
+                                     confidence=0.6, source="agent")
+        elif len(user_input) > 100:
+            await ProfileManager.set(user_id, "reply_style", "detailed",
+                                     confidence=0.6, source="agent")
+
+    except Exception as e:
+        logger.debug(f"Memory extraction skipped (non-critical): {e}")
+
+
+class AgentService:
         """
         处理一次 Agent 对话（非流式）
 
@@ -107,9 +136,29 @@ class AgentService:
         }
 
         try:
+            # === Load Memory Context ===
+            from agent_service.memory.profile import ProfileManager
+            from agent_service.memory.working import WorkingMemory
+            from agent_service.memory.memories import MemoryManager as UserMemory
+
+            # 注入用户画像到 System Prompt (如果有的话)
+            profile_text = await ProfileManager.get_context_text(request.user_id or 0)
+            if profile_text:
+                from langchain_core.messages import SystemMessage
+                initial_state["messages"].append(SystemMessage(content=profile_text))
+
+            # 恢复工作记忆
+            working = await WorkingMemory.get(session_id)
+            if working and working.get("intent"):
+                initial_state["intent"] = working.get("intent", "")
+
             # 执行 LangGraph 工作流
             graph = get_agent_graph()
             final_state = await graph.ainvoke(initial_state)
+
+            # === Save Working Memory ===
+            await WorkingMemory.save(session_id, "intent", final_state.get("intent"))
+            await WorkingMemory.save(session_id, "actions", final_state.get("actions_taken", []))
 
             # === Trace 各步骤 ===
             tracer.add_step("planner",
@@ -150,6 +199,12 @@ class AgentService:
 
             tracer.add_step("reply",
                 output_data={"reply": reply[:500]})
+
+            # === Memory Extraction (对话结束后异步提取) ===
+            import asyncio as _asyncio
+            _asyncio.create_task(_extract_and_save_memories(user_input=request.message,
+                                                            ai_reply=reply,
+                                                            user_id=request.user_id or 0))
 
             # === 结束 Trace ===
             tracer.finish(reply)
