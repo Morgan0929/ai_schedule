@@ -240,6 +240,22 @@ DocumentClassifier (8种类型, 关键词+LLM)
 
 核心原则: **分类优先 → 结构化提取优先 → 必要时才 Chunk → Embedding**。不是所有东西都塞向量库。
 
+### 模型分工
+
+```
+林 Agent
+    │
+    ├── DeepSeek-V3 (推理/生成)  — deepseek-chat
+    ├── DeepSeek-VL (图片理解)   — Document Analyzer Tool
+    └── BGE-M3 (向量检索, 1024d) — RAG Infrastructure 层
+              │
+              ├── HuggingFaceBgeEmbeddings (langchain_community)
+              ├── SentenceTransformer (直接调用)
+              └── Fallback (字符特征, 零依赖)
+
+Agent 只调用 Retriever, 不关心向量如何生成。换模型只改 EmbeddingService。
+```
+
 ---
 
 ## 八、Middleware 层

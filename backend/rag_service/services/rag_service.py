@@ -13,28 +13,64 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
-    """BGE-M3 嵌入服务 (1024维) / 回退 fallback"""
+    """
+    BGE-M3 嵌入服务 (1024维)
+
+    加载顺序:
+      1. HuggingFaceBgeEmbeddings (langchain_community, 推荐)
+      2. SentenceTransformer (直接调用)
+      3. Fallback (字符特征, 零依赖)
+
+    属于 RAG Infrastructure 层 — Agent 不直接调用, 通过 Retriever 间接使用。
+    换模型只改这里。
+    """
 
     _model = None
 
     @classmethod
     def _load_model(cls):
-        if cls._model is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-                cls._model = SentenceTransformer("BAAI/bge-m3")
-                logger.info("BGE-M3 loaded (1024d)")
-            except Exception:
-                cls._model = "fallback"
-                logger.warning("BGE-M3 unavailable, using fallback")
+        if cls._model is not None:
+            return
+
+        # 方式 1: LangChain 封装 (推荐)
+        try:
+            from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+            cls._model = HuggingFaceBgeEmbeddings(
+                model_name="BAAI/bge-m3",
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"normalize_embeddings": True},
+            )
+            logger.info("BGE-M3 loaded via langchain_community (1024d)")
+            return
+        except Exception as e:
+            logger.debug(f"langchain_community BGE failed: {e}")
+
+        # 方式 2: 直接 sentence-transformers
+        try:
+            from sentence_transformers import SentenceTransformer
+            cls._model = SentenceTransformer("BAAI/bge-m3")
+            logger.info("BGE-M3 loaded via sentence-transformers (1024d)")
+            return
+        except Exception as e:
+            logger.debug(f"SentenceTransformer failed: {e}")
+
+        # 方式 3: Fallback
+        cls._model = "fallback"
+        logger.warning("BGE-M3 unavailable, using character fallback")
 
     @classmethod
     def encode(cls, texts: list[str]) -> list[list[float]]:
         cls._load_model()
         if cls._model == "fallback":
             return cls._fallback_encode(texts)
+        # HuggingFaceBgeEmbeddings 用 embed_documents
+        if hasattr(cls._model, "embed_documents"):
+            return cls._model.embed_documents(texts)
+        # SentenceTransformer 用 encode → tolist
         embeddings = cls._model.encode(texts, normalize_embeddings=True)
-        return embeddings.tolist()
+        if hasattr(embeddings, "tolist"):
+            return embeddings.tolist()
+        return list(embeddings)
 
     @classmethod
     def _fallback_encode(cls, texts: list[str]) -> list[list[float]]:
