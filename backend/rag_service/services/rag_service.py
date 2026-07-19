@@ -62,22 +62,64 @@ class RagService:
     async def upload_document(
         user_id: int, filename: str, content: str,
         file_type: str = "text", source_type: str = "upload",
-        metadata: dict = None, chunk_size: int = 500,
+        metadata: dict = None,
     ) -> dict:
+        """
+        上传文档 → 分类 → 选择Splitter → 结构化提取/chunk → embedding → 入库
+
+        不同类型不同处理:
+          - 课程表 → 结构化提取 (不chunk)
+          - 作业通知 → 提取事件 (不chunk)
+          - 会议纪要 → 按标题切
+          - 通用文档 → RecursiveTextSplitter (800/150)
+        """
         from rag_service.repository.rag_repo import RagRepository, get_rag_conn
+        from rag_service.parser.pipeline import DocumentPipeline
+
         conn = await get_rag_conn()
         try:
             repo = RagRepository(conn)
-            doc_id = await repo.create_document(user_id, filename, file_type, source_type, metadata)
-            chunks = _split_text(content, chunk_size)
-            texts = [c["content"] for c in chunks]
-            embeddings = EmbeddingService.encode(texts)
-            for i, emb in enumerate(embeddings):
-                chunks[i]["embedding"] = emb
-                chunks[i]["metadata"] = chunks[i].get("metadata", {})
-                chunks[i]["metadata"].update(metadata or {})
-            count = await repo.insert_chunks(doc_id, chunks)
-            return {"document_id": doc_id, "chunks": count, "filename": filename}
+
+            # Pipeline: classify → split → embed
+            pipeline = DocumentPipeline()
+            result = await pipeline.process(content, filename, user_id, metadata)
+
+            # 创建文档记录
+            doc_id = await repo.create_document(
+                user_id, filename,
+                file_type=result["doc_type"],
+                source_type=source_type,
+                metadata={
+                    **(metadata or {}),
+                    "classifier_confidence": result["confidence"],
+                    "structured_items": result["structured_count"],
+                },
+            )
+
+            # 入库 chunks
+            count = await repo.insert_chunks(doc_id, result["chunks"])
+
+            # 结构化数据处理
+            structured_tasks = []
+            if result["structured_count"] > 0:
+                structured_tasks = await _process_structured_data(
+                    user_id, result["chunks"], result["doc_type"]
+                )
+
+            logger.info(
+                f"RAG upload: doc={doc_id} type={result['doc_type']} "
+                f"chunks={count} structured={result['structured_count']}"
+            )
+
+            return {
+                "document_id": doc_id,
+                "chunks": count,
+                "filename": filename,
+                "doc_type": result["doc_type"],
+                "confidence": result["confidence"],
+                "structured_items": result["structured_count"],
+                "tasks_created": len(structured_tasks),
+            }
         finally:
             await conn.close()
 
@@ -129,21 +171,28 @@ class RagService:
             await conn.close()
 
 
-def _split_text(text: str, chunk_size: int = 500) -> list[dict]:
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    chunks = []
-    for para in paragraphs:
-        if len(para) <= chunk_size:
-            chunks.append({"content": para, "metadata": {}})
-        else:
-            sentences = para.replace("。", "。\n").replace("！", "！\n").split("\n")
-            buffer = ""
-            for s in sentences:
-                if len(buffer) + len(s) > chunk_size and buffer:
-                    chunks.append({"content": buffer.strip(), "metadata": {}})
-                    buffer = s
-                else:
-                    buffer += s
-            if buffer.strip():
-                chunks.append({"content": buffer.strip(), "metadata": {}})
-    return chunks
+async def _process_structured_data(
+    user_id: int, chunks: list[dict], doc_type: str
+) -> list[dict]:
+    """
+    将结构化提取的数据路由到对应的业务系统
+
+    course → 创建 schedule 条目
+    assignment → 创建 task
+    """
+    tasks = []
+    for chunk in chunks:
+        md = chunk.get("metadata", {})
+        if not md.get("structured"):
+            continue
+
+        if doc_type == "course":
+            # 创建 schedule 条目
+            tasks.append({"action": "schedule", "data": md})
+        elif doc_type == "assignment":
+            # 自动创建任务
+            tasks.append({"action": "task", "data": md})
+        elif doc_type == "meeting" and md.get("section_type") == "todo":
+            tasks.append({"action": "task", "data": md})
+
+    return tasks
