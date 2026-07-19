@@ -37,7 +37,7 @@
 | 可观测 | LangSmith | 0.8.15 | 飞行记录仪 |
 | 爬虫 | requests + BS4 + Playwright | — | 4 个注册爬虫 |
 | 定时任务 | APScheduler | 3.11.2 | 爬虫定时采集 |
-| 向量数据库 | Qdrant | 内存回退 | RAG 检索 |
+| 向量数据库 | pgvector + BGE-M3 | PostgreSQL 扩展 | RAG 语义检索 (1024d) |
 | 移动端 | Flutter | 待开发 | 手机 App |
 
 ---
@@ -70,7 +70,10 @@ D:/AIagent日程规划/
 │   │   └── utils/            Tracer (LangSmith) + Coordinator
 │   ├── timeline_service/    :8003     任务 CRUD + 冲突检测 + 课表
 │   ├── crawler_service/     :8001     爬虫 (4 spiders) + APScheduler
-│   ├── rag_service/         :8004     RAG 知识库
+│   ├── rag_service/         :8004     RAG (pgvector + Document Pipeline)
+│   │   ├── parser/           分类器 + 多策略Splitter + 加工流水线
+│   │   ├── repository/       pgvector 数据访问
+│   │   └── services/         Embedding + RagService
 │   └── personal/                     本地脚本 (gitignored)
 │
 └── mobile/                           Flutter App (待开发)
@@ -126,7 +129,7 @@ Middleware = 拦截 (ToolCallLimit / Retry / Summarize)
 | Phase 2 — CRUD | ✅ | User/Task CRUD + JWT + PostgreSQL |
 | Phase 3 — 爬虫 | ✅ | 4爬虫 (BS4/Playwright/httpx) |
 | Phase 4 — Agent | ✅ | LangGraph + Pydantic + 流式SSE + 中间件 + 记忆系统 |
-| Phase 5 — RAG | ✅ | SimpleEmbedding + 内存向量 |
+| Phase 5 — RAG | ✅ | pgvector + BGE-M3(1024d) + Document Pipeline (8类型分类+5种Splitter) |
 | Phase 6 — Flutter | 🔲 | 移动端 |
 | Phase 7 — 部署 | 🔲 | Docker + Nginx |
 
@@ -150,7 +153,7 @@ Middleware = 拦截 (ToolCallLimit / Retry / Summarize)
 
 **服务器**：<REMOTE_DB_HOST>:5432  
 **数据库**：<DB_NAME> | **用户**：<DB_USER>  
-**表**：10 张
+**表**：13 张
 
 | 表 | 用途 |
 |------|------|
@@ -164,6 +167,9 @@ Middleware = 拦截 (ToolCallLimit / Retry / Summarize)
 | user_profile | 用户画像 (key/value/confidence) |
 | conversation_summary | 短期摘要 (7天) |
 | user_memory | 通用记忆 (habit/preference/fact/event) |
+| rag_document | RAG 原始文件元信息 |
+| rag_chunk | 文档分段 + VECTOR(1024) embedding |
+| rag_memory | 语义个人记忆 + VECTOR(1024) embedding |
 
 ---
 
@@ -208,7 +214,35 @@ GET  /api/v1/rag/search?q=       语义搜索
 
 ---
 
-## 七、Middleware 层
+## 七、RAG — Document Pipeline
+
+```
+上传文档
+    │
+    ▼
+DocumentClassifier (8种类型, 关键词+LLM)
+    │
+    ├── course     → CourseExtractor → 结构化 → SQL schedule + pgvector
+    ├── assignment → AssignmentExtractor → 提取事件 → SQL task + pgvector
+    ├── meeting    → MeetingSplitter → 按#标题切 (decision/todo/discussion)
+    ├── ticket     → NoSplitter → 整条保存
+    └── general    → RecursiveSplitter(800/150) → embedding → pgvector
+```
+
+| 文档类型 | 策略 | chunk? |
+|----------|------|--------|
+| 课程表 | 正则提取 课程/教师/教室/节次 | ❌ 结构化 |
+| 作业通知 | 提取 标题/截止/课程 | ❌ 事件 |
+| 会议纪要 | 按 # 标题切 + 标记类型 | ✅ |
+| 项目文档 | RecursiveSplitter(1000/200) | ✅ |
+| 通用文档 | RecursiveSplitter(800/150) | ✅ |
+| 票据 | 不切, 整条 | ❌ |
+
+核心原则: **分类优先 → 结构化提取优先 → 必要时才 Chunk → Embedding**。不是所有东西都塞向量库。
+
+---
+
+## 八、Middleware 层
 
 | Middleware | 作用 |
 |------|------|
@@ -222,7 +256,7 @@ GET  /api/v1/rag/search?q=       语义搜索
 
 ---
 
-## 八、Memory System
+## 九、Memory System
 
 ```
 Working  (Redis, TTL=30min) : 当前对话状态
@@ -237,7 +271,7 @@ Vector   (Qdrant, 未来)      : 语义搜索
 
 ---
 
-## 九、安全原则
+## 十、安全原则
 
 | # | 原则 | 状态 |
 |---|------|------|
