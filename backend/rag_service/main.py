@@ -1,5 +1,5 @@
 """
-rag_service 入口 — RAG 知识库 (Qdrant / In-Memory)
+rag_service — PostgreSQL + pgvector RAG 知识库
 端口 8004
 """
 import sys
@@ -63,19 +63,64 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.get("/health", response_model=Result)
 async def health_check():
-    return Result.success({
-        "status": "ok",
-        "service": "rag-service",
-        "stats": RagService.get_stats(),
-    })
+    return Result.success({"status": "ok", "service": "rag-service"})
 
 
-# ============ 知识库 API ============
+# ============ Document RAG API ============
 @app.post("/api/v1/rag/documents", response_model=Result)
 async def upload_document(request: DocumentUploadRequest):
-    """上传文档到知识库（文本内容）"""
-    result = await RagService.upload_document(request)
-    return Result.created(result.model_dump())
+    """上传文档 → 分段 → embedding → pgvector"""
+    result = await RagService.upload_document(
+        user_id=1,  # TODO: JWT
+        filename=request.title,
+        content=request.content,
+        file_type=request.doc_type,
+    )
+    return Result.created(result)
+
+
+@app.get("/api/v1/rag/search", response_model=Result)
+async def search_documents(
+    q: str = Query(..., description="搜索查询"),
+    top_k: int = Query(5, ge=1, le=20),
+    category: str = Query(None, description="按分类过滤 (course/project等)"),
+):
+    """文档语义搜索 (pgvector cosine similarity)"""
+    results = await RagService.search_documents(user_id=1, query=q, top_k=top_k, category=category)
+    return Result.success(results)
+
+
+# ============ Memory RAG API ============
+@app.post("/api/v1/rag/memory", response_model=Result)
+async def save_memory(request: dict):
+    """保存语义记忆 (从对话中提取的习惯/偏好/事实)"""
+    result = await RagService.save_semantic_memory(
+        user_id=request.get("user_id", 1),
+        content=request["content"],
+        memory_type=request.get("memory_type", "general"),
+        confidence=request.get("confidence", 0.5),
+    )
+    return Result.created(result)
+
+
+@app.get("/api/v1/rag/memory/search", response_model=Result)
+async def search_memory(
+    q: str = Query(...),
+    memory_type: str = Query(None),
+    top_k: int = Query(5),
+):
+    """语义记忆搜索 — '之前那个旅游计划怎么样了?'"""
+    results = await RagService.search_semantic_memory(
+        user_id=1, query=q, memory_type=memory_type, top_k=top_k,
+    )
+    return Result.success(results)
+
+
+@app.post("/api/v1/rag/memory/cleanup", response_model=Result)
+async def cleanup_memories(user_id: int = Query(1), min_confidence: float = Query(0.3)):
+    """清理低置信度记忆"""
+    count = await RagService.cleanup_memories(user_id, min_confidence)
+    return Result.success({"deleted": count})
 
 
 @app.get("/api/v1/rag/search", response_model=Result)

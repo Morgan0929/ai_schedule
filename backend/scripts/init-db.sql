@@ -110,6 +110,40 @@ CREATE TABLE IF NOT EXISTS knowledge_doc (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- RAG 文档表
+CREATE TABLE IF NOT EXISTS rag_document (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    filename VARCHAR(255),
+    file_type VARCHAR(50),
+    source_type VARCHAR(50) DEFAULT 'upload',
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- RAG 分段表 (pgvector)
+CREATE TABLE IF NOT EXISTS rag_chunk (
+    id BIGSERIAL PRIMARY KEY,
+    document_id BIGINT REFERENCES rag_document(id) ON DELETE CASCADE,
+    chunk_index INTEGER DEFAULT 0,
+    content TEXT NOT NULL,
+    embedding VECTOR(1024),
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- RAG 语义记忆表 (pgvector)
+CREATE TABLE IF NOT EXISTS rag_memory (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    memory_type VARCHAR(50) DEFAULT 'general',
+    confidence FLOAT DEFAULT 0.5,
+    embedding VECTOR(1024),
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 插入默认 admin 用户（密码: <CHANGE_ME>，需通过应用层 bcrypt 加密）
 -- INSERT INTO sys_user (username, email, password_hash, role)
 -- VALUES ('admin', 'admin@example.com', '$2b$12$...', 'ADMIN');

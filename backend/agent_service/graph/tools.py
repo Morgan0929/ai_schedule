@@ -331,10 +331,11 @@ async def analyze_document(user_id: int, image_base64: str,
 # ============ 知识库工具 ============
 
 async def search_knowledge(user_id: int, query: str, top_k: int = 3) -> list[dict]:
-    """搜索知识库"""
-    from rag_service.utils.retriever import retriever
-    results = await retriever.search(query, top_k=top_k)
-    return results
+    """搜索知识库 — pgvector 语义检索"""
+    from rag_service.services.rag_service import RagService
+    docs = await RagService.search_documents(user_id, query, top_k)
+    mems = await RagService.search_semantic_memory(user_id, query, top_k=3)
+    return {"documents": docs, "memories": mems}
 
 
 # ============ 工具注册表 ============
