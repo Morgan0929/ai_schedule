@@ -34,8 +34,11 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """应用生命周期"""
     await init_db()
+    from agent_service.mcp.client import init_mcp_servers, list_all_mcp_tools
+    mcp_servers = init_mcp_servers()
+    mcp_tools = list_all_mcp_tools()
     mode = "LLM (DeepSeek)" if is_llm_available() else "Mock (规则引擎)"
-    logger.info(f"Agent service started — 模式: {mode}")
+    logger.info(f"Agent started — Mode: {mode} | MCP: {mcp_servers} ({len(mcp_tools)} tools)")
     yield
 
 
