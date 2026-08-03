@@ -141,11 +141,19 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
     conflicts = state.get("conflicts_found", [])
     calendar_events = state.get("calendar_events", [])
     suggestions = state.get("suggestions", [])
+    external_data = state.get("external_data", {})
 
     # 构建结构化摘要
     summary_parts = []
     if actions:
-        summary_parts.append("📋 已执行操作:\n" + "\n".join(f"  • {a}" for a in actions))
+        summary_parts.append("已执行操作:\n" + "\n".join(f"  • {a}" for a in actions))
+    # 天气数据
+    weather = external_data.get("weather", {})
+    if weather and weather.get("source") in ("mcp", "realtime"):
+        summary_parts.append(
+            f"天气: {weather.get('city','')} {weather.get('temp_c','')}°C "
+            f"{weather.get('weather_desc','')} 湿度{weather.get('humidity','')}%"
+        )
     if calendar_events:
         summary_parts.append(f"📅 查询到 {len(calendar_events)} 个相关日程")
     if conflicts:
