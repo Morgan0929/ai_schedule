@@ -232,9 +232,9 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
 
 def _needs_confirmation(state: AgentState) -> Literal["reply", "tools_executor"]:
     """Validator → Reply (需确认) 或 Tools Executor (通过)"""
-    if state.get("_needs_confirmation"):
-        return "reply"
-    return "tools_executor"
+    route = "reply" if state.get("_needs_confirmation") else "tools_executor"
+    print("ROUTER:", route, "_needs_confirmation=", state.get("_needs_confirmation"))
+    return route
 
 
 def should_use_tools(state: AgentState) -> Literal["tools_executor", "reply"]:
