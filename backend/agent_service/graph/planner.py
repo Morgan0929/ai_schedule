@@ -17,6 +17,24 @@ CONFIDENCE_THRESHOLD = 0.8  # 低于此值需要用户确认
 async def planner_node(state: AgentState) -> dict[str, Any]:
     user_input = state["user_input"]
 
+    # Context Resolver: 用户选择了 A/B/C → 解析冲突上下文
+    pending = state.get("pending_action", {})
+    if pending.get("type") == "conflict_resolution":
+        options = pending.get("options", {})
+        choice = user_input.strip().upper()
+        if choice in options:
+            opt = options[choice]
+            return {
+                "intent": "update_event",
+                "sub_tasks": [
+                    {"action": "update_task", "params": {
+                        "target": opt["task"], "hint": user_input
+                    }},
+                ],
+                "needs_confirmation": False,
+                "pending_action": {},  # 清除
+            }
+
     # LLM 优先
     if is_llm_available():
         result = await _llm_plan(user_input)

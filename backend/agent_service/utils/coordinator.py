@@ -28,11 +28,25 @@ async def coordinator_node(state: AgentState) -> dict[str, Any]:
             # 不替用户决定 — 所有方案平等, 等用户选
             for s in suggestions:
                 s["is_recommended"] = False
+            # 保存冲突上下文, 供下一轮"B 延后一小时"使用
+            options = {}
+            for i, c in enumerate(conflicts[:3]):
+                plan_id = chr(ord("A") + i)
+                options[plan_id] = {
+                    "action": "move_new",
+                    "task": c.get("task_b", ""),
+                    "conflict_with": c.get("task_a", ""),
+                    "time": c.get("task_b_time", ""),
+                }
             r = {
                 "conflicts_found": conflicts,
                 "conflict_count": len(conflicts),
                 "suggestions": suggestions,
                 "recommended_plan": "",  # 等用户选择
+                "pending_action": {
+                    "type": "conflict_resolution",
+                    "options": options,
+                },
             }
             print("COORDINATOR OUTPUT:", r)
             return r

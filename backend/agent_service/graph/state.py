@@ -51,6 +51,9 @@ class AgentState(TypedDict, total=False):
     _source: str
     _validated: bool
 
+    # Conflict Context (多轮)
+    pending_action: dict
+
     # Middleware
     tool_calls_count: int
     _tool_history: list[str]
