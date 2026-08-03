@@ -52,10 +52,16 @@ async def _llm_plan(user_input: str) -> PlannerOutput | None:
         if isinstance(result, PlannerOutput):
             result.source = "llm"
             if not result.confidence:
-                result.confidence = 0.85  # LLM 未明确给置信度时默认
+                result.confidence = 0.85
+            # === DIAG: 1. Planner 原始输出 ===
+            import json
+            print("[DIAG-1] Planner LLM raw:", json.dumps({
+                "intent": result.intent, "tool": result.tool,
+                "entities": result.entities, "confidence": result.confidence,
+            }, ensure_ascii=False))
             return result
-    except Exception:
-        pass
+    except Exception as e:
+        print("[DIAG-1] Planner LLM FAILED:", e)
     return None
 
 
