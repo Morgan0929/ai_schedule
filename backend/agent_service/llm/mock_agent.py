@@ -185,60 +185,34 @@ async def mock_chat(user_input: str) -> str:
         start = entities.get("start", "今天")
         end = entities.get("end", "7天后")
         return (
-            f"好的呀，帮你看看 {start} ~ {end} 的安排～\n\n"
-            f"【当前安排】\n"
-            f"这段时间暂时还没有日程，挺空的。\n\n"
-            f"需要我帮你安排什么吗？比如「明天下午3点开会」这样告诉我就行。"
+            f"【当前安排】{start} ~ {end}\n暂无日程。\n\n需要安排什么？比如「明天下午3点开会」。"
         )
 
     if intent == "CREATE_TASK":
         title = entities.get("title", user_input)
         return (
-            f"收到，已经帮你记下啦～\n\n"
-            f"【确认】\n"
-            f"任务：{title}\n"
-            f"时间：{entities.get('start', '待定')}\n"
-            f"优先级：{entities.get('priority', 'MEDIUM')}\n\n"
-            f"如果需要指定具体时间，告诉我「下午3点到5点」就行。"
+            f"【确认】已创建\n任务：{title}\n时间：{entities.get('start', '待定')}\n优先级：{entities.get('priority', 'MEDIUM')}"
         )
 
     if intent == "ARRANGE_TRIP":
         dest = entities.get("destination", entities.get("city", "目的地"))
         return (
-            f"好的，{dest}之行走起～\n\n"
-            f"【确认】\n"
-            f"出差地点：{dest}\n\n"
-            f"我会帮你准备好：\n"
-            f"  1. 查一下 {dest} 那几天的天气\n"
-            f"  2. 确认已有的日程有没有冲突\n"
-            f"  3. 生成一份出行时间线\n\n"
-            f"告诉我具体日期，我帮你一站式搞定。"
+            f"【确认】出差：{dest}\n准备：1.查{dest}天气 2.检查日程冲突 3.生成时间线\n告诉我具体日期。"
         )
 
     if intent == "DETECT_CONFLICT":
         return (
-            f"好嘞，帮你扫描一下～\n\n"
-            f"【当前安排】\n"
-            f"检查范围：{entities.get('start', '未来7天')}\n"
-            f"目前没有发现时间冲突，安排挺合理的。\n\n"
-            f"如果有新的安排，随时告诉我，我会帮你检查会不会撞时间。"
+            f"【当前安排】检查范围：{entities.get('start', '未来7天')}\n未发现时间冲突。"
         )
 
     if intent == "GENERATE_TIMELINE":
         return (
-            f"帮你整理一下时间线～\n\n"
-            f"日期：{entities.get('start', date.today().isoformat())}\n"
-            f"今天还没有安排呢，时间线是空的。\n\n"
-            f"先添加一些任务吧，我会帮你排成一条漂亮的时间线。"
+            f"日期：{entities.get('start', date.today().isoformat())}\n暂无安排，时间线为空。"
         )
 
     if intent == "QUERY_WEATHER":
         city = entities.get("city", "北京")
-        return (
-            f"帮你看看 {city} 的天气～\n\n"
-            f"（天气数据需要后台服务支持，当前是离线模式）\n"
-            f"配置好之后就能实时查询啦。"
-        )
+        return f"查询{city}天气中。\n（当前为离线模式，配置后可实时查询）"
 
     # 无关事务 → 拒绝
     out_of_scope = [
@@ -249,21 +223,17 @@ async def mock_chat(user_input: str) -> str:
     ]
     if any(w in user_input for w in out_of_scope):
         return (
-            "我是林，你的个人事务秘书，主要负责日程安排、任务管理和生活提醒。\n"
-            "这个问题不属于我的工作范围，我无法协助处理。\n\n"
-            "你可以试试：\n"
-            "  • 查看明天的安排\n"
-            "  • 帮我安排周五下午的会议\n"
-            "  • 下周去上海出差"
+            "我是林，你的个人事务秘书。\n"
+            "这个问题不属于我的工作范围。\n\n"
+            "可以帮你：查看日程 / 创建任务 / 冲突检测 / 安排出差"
         )
 
     # 普通对话 — 林的开场白
     return (
-        f"嗨，我是林，你的个人事务秘书～\n\n"
-        f"我能帮你打理这些事情：\n"
-        f"  • 查询日程 — 试试「查看明天的安排」\n"
-        f"  • 创建任务 — 试试「帮我安排周五下午的会议」\n"
-        f"  • 冲突检测 — 试试「检查下周有没有冲突」\n"
-        f"  • 安排出差 — 试试「下周去上海出差」\n"
-        f"  • 生成时间线 — 试试「生成明天的时间线」"
+        "我是林，你的个人事务秘书。\n\n"
+        "可以帮你：\n"
+        "  查看日程 —「查看明天的安排」\n"
+        "  创建任务 —「帮我安排周五下午的会议」\n"
+        "  冲突检测 —「检查下周有没有冲突」\n"
+        "  安排出差 —「下周去上海出差」"
     )
