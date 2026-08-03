@@ -7,7 +7,7 @@ LLM 失败时返回 UNKNOWN (confidence=0, source=fallback)
 from datetime import date, datetime
 from typing import Any
 from agent_service.graph.state import AgentState
-from agent_service.graph.schemas import PlannerOutput
+from agent_service.graph.schemas import PlannerOutput, Intent, normalize_intent
 from agent_service.llm.deepseek_client import is_llm_available, get_structured_llm
 from agent_service.llm.prompts import planner_prompt
 
@@ -138,27 +138,27 @@ def _detect_event_statement(text: str) -> dict[str, Any]:
 
 def _planner_output_to_state(result: PlannerOutput) -> dict[str, Any]:
     """PlannerOutput → AgentState 更新"""
-    intent = result.intent.lower() if result.intent else "chat"
+    intent = normalize_intent(result.intent.value if isinstance(result.intent, Intent) else str(result.intent))
+    intent_str = intent.value
     sub_tasks = []
     entities = result.entities or {}
 
-    # 意图 → 动作映射 (不依赖 LLM 填 tool 字段)
     intent_to_action = {
-        "create_event": "create_task",
-        "create_todo": "create_task",
-        "create_reminder": "create_task",
-        "delete_event": "delete_task",
-        "update_event": "update_task",
-        "query_schedule": "check_calendar",
-        "query_calendar": "check_calendar",
-        "query_weather": "query_weather",
-        "arrange_trip": "create_task",
+        Intent.CREATE_EVENT: "create_task",
+        Intent.CREATE_TODO: "create_task",
+        Intent.CREATE_REMINDER: "create_task",
+        Intent.DELETE_EVENT: "delete_task",
+        Intent.UPDATE_EVENT: "update_task",
+        Intent.QUERY_SCHEDULE: "check_calendar",
+        Intent.QUERY_WEATHER: "query_weather",
+        Intent.ARRANGE_TRIP: "create_task",
     }
     action = intent_to_action.get(intent)
     if action:
         sub_tasks.append({"action": action, "params": entities.copy()})
 
-    if intent in ("create_event", "create_todo", "create_reminder", "update_event", "arrange_trip"):
+    if intent in (Intent.CREATE_EVENT, Intent.CREATE_TODO, Intent.CREATE_REMINDER,
+                  Intent.UPDATE_EVENT, Intent.ARRANGE_TRIP):
         sub_tasks.insert(0, {"action": "check_calendar", "params": entities})
     if intent == "arrange_trip":
         sub_tasks.append({"action": "query_weather", "params": entities})

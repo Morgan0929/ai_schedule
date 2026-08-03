@@ -43,7 +43,10 @@ async def validator_node(state: dict) -> dict[str, Any]:
         }; _vlog("AFTER VALIDATOR", r); return r
 
     # 3. 任务类意图必须检查参数
-    task_intents = ("create_event", "create_todo", "create_reminder", "update_event", "delete_event", "arrange_trip")
+    from agent_service.graph.schemas import Intent
+    task_intents = (Intent.CREATE_EVENT.value, Intent.CREATE_TODO.value,
+                    Intent.CREATE_REMINDER.value, Intent.UPDATE_EVENT.value,
+                    Intent.DELETE_EVENT.value, Intent.ARRANGE_TRIP.value)
     if intent in task_intents:
         issues = []
         task_params = {}

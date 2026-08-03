@@ -12,29 +12,49 @@ from pydantic import BaseModel, Field
 # Node 1 — Planner 输出
 # ============================================================
 
-class PlannerOutput(BaseModel):
-    """Planner Node: 意图识别结果 (with confidence + source)"""
-    intent: Literal[
-        "create_event", "CREATE_EVENT",
-        "create_todo", "CREATE_TODO",
-        "create_reminder", "CREATE_REMINDER",
-        "delete_event", "DELETE_EVENT",
-        "update_event", "UPDATE_EVENT",
-        "query_schedule", "QUERY_SCHEDULE", "QUERY_CALENDAR",
-        "query_weather", "QUERY_WEATHER",
-        "arrange_trip", "ARRANGE_TRIP",
-        "image_analysis", "IMAGE_ANALYSIS",
-        "detect_conflict", "DETECT_CONFLICT",
-        "chat", "CHAT",
-        "unknown", "UNKNOWN",
-    ] = Field(description="用户意图类型")
+from enum import Enum
 
-    tool: str | None = Field(default=None, description="工具名称")
-    entities: dict[str, Any] = Field(default_factory=dict, description="提取的实体")
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="置信度")
-    source: str = Field(default="mock", description="识别来源: llm / mock")
-    reason: str = Field(default="", description="为什么判定为该意图")
-    need_confirmation: bool = Field(default=False, description="是否需要用户确认")
+class Intent(str, Enum):
+    CREATE_EVENT = "create_event"
+    CREATE_TODO = "create_todo"
+    CREATE_REMINDER = "create_reminder"
+    DELETE_EVENT = "delete_event"
+    UPDATE_EVENT = "update_event"
+    QUERY_SCHEDULE = "query_schedule"
+    QUERY_WEATHER = "query_weather"
+    ARRANGE_TRIP = "arrange_trip"
+    IMAGE_ANALYSIS = "image_analysis"
+    DETECT_CONFLICT = "detect_conflict"
+    CHAT = "chat"
+    UNKNOWN = "unknown"
+
+
+def normalize_intent(raw: str) -> Intent:
+    """统一意图名: QUERY_CALENDAR→query_schedule, CREATE_TASK→create_event"""
+    mapping = {
+        "query_calendar": Intent.QUERY_SCHEDULE,
+        "create_task": Intent.CREATE_EVENT,
+        "delete_task": Intent.DELETE_EVENT,
+        "update_task": Intent.UPDATE_EVENT,
+    }
+    lower = raw.lower().strip()
+    if lower in mapping:
+        return mapping[lower]
+    try:
+        return Intent(lower)
+    except ValueError:
+        return Intent.UNKNOWN
+
+
+class PlannerOutput(BaseModel):
+    """Planner Node: 意图识别结果"""
+    intent: Intent = Field(default=Intent.UNKNOWN, description="用户意图")
+    tool: str | None = Field(default=None)
+    entities: dict[str, Any] = Field(default_factory=dict)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    source: str = Field(default="mock")
+    reason: str = Field(default="")
+    need_confirmation: bool = Field(default=False)
 
 
 # ============================================================
