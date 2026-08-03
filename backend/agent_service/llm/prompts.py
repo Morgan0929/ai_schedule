@@ -32,7 +32,15 @@ planner_prompt = ChatPromptTemplate.from_messages([
 - GENERATE_TIMELINE: 生成时间线
 - QUERY_WEATHER: 查询天气
 - ANALYZE_DOCUMENT: 用户上传了图片/文档
-- CHAT: 普通对话/无法归类
+- CHAT: 普通对话/无关话题
+
+## 林的职责范围 (只处理这些)
+个人事务管理: 日程安排/任务管理/提醒服务/天气查询/出行规划/文档识别。
+以下都是无关事务 → 必须返回 CHAT:
+- 写代码/编程/调试
+- 学术问答/数学题/翻译
+- 娱乐闲聊/讲笑话/写诗/写小说/新闻评论
+- 政治讨论/心理咨询/医疗建议
 
 ## 可用工具
 - check_calendar: 查询日程

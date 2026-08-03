@@ -21,7 +21,17 @@ def detect_intent(user_input: str) -> dict[str, Any]:
     """
     text = user_input.strip()
 
-    # 天气查询（最高优先级：含"天气"关键词）
+    # === 无关事务检测 (最高优先级) ===
+    out_of_scope = [
+        "写代码", "编程", "写程序", "调试", "bug", "帮我写", "帮我改",
+        "翻译", "数学题", "物理题", "化学题", "解释一下", "什么是",
+        "讲笑话", "写诗", "写小说", "写故事", "新闻", "评论",
+        "心理咨询", "看病", "诊断", "法律", "建议一下",
+    ]
+    if any(w in text for w in out_of_scope):
+        return {"intent": "CHAT", "entities": {}, "confidence": 0.95}
+
+    # 天气查询
     if any(w in text for w in ["天气", "气温", "下雨", "降温"]):
         return {"intent": "QUERY_WEATHER", "entities": _extract_city(text), "confidence": 0.95}
 
