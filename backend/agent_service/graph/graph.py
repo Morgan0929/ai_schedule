@@ -15,6 +15,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from agent_service.graph.state import AgentState
 from agent_service.graph.planner import planner_node
+from agent_service.graph.validator import validator_node
 from agent_service.graph.tools import execute_tool
 from agent_service.utils.coordinator import coordinator_node
 from agent_service.llm.deepseek_client import chat_completion, is_llm_available
@@ -229,6 +230,13 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
 
 # ============ 路由函数 ============
 
+def _needs_confirmation(state: AgentState) -> Literal["reply", "tools_executor"]:
+    """Validator → Reply (需确认) 或 Tools Executor (通过)"""
+    if state.get("_needs_confirmation"):
+        return "reply"
+    return "tools_executor"
+
+
 def should_use_tools(state: AgentState) -> Literal["tools_executor", "reply"]:
     """判断是否需要执行工具"""
     sub_tasks = state.get("sub_tasks", [])
@@ -261,6 +269,7 @@ def build_agent_graph() -> StateGraph:
 
     # 添加节点
     workflow.add_node("planner", planner_node)
+    workflow.add_node("validator", validator_node)
     workflow.add_node("tools_executor", tools_executor_node)
     workflow.add_node("conflict_check", conflict_check_node)
     workflow.add_node("coordinator", coordinator_node)
@@ -269,11 +278,14 @@ def build_agent_graph() -> StateGraph:
     # 设置入口
     workflow.set_entry_point("planner")
 
-    # Planner → Tools 或 Reply
+    # Planner → Validator
+    workflow.add_edge("planner", "validator")
+
+    # Validator → Tools (确认通过) 或 Reply (需要确认/有问题)
     workflow.add_conditional_edges(
-        "planner",
-        should_use_tools,
-        {"tools_executor": "tools_executor", "reply": "reply"},
+        "validator",
+        _needs_confirmation,
+        {"reply": "reply", "tools_executor": "tools_executor"},
     )
 
     # Tools → Conflict Check 或 Coordinator
