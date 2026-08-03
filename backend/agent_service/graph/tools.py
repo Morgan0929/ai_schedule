@@ -128,10 +128,15 @@ async def create_task_tool(user_id: int, title: str, start_time: str = None,
         # Check conflict
         existing = await conn.fetch("SELECT id,title,start_time,end_time FROM task WHERE user_id=$1 AND start_time < $2 AND end_time > $3",
             user_id, dto.end_time, dto.start_time)
-        print("EXISTING TASKS:", [(r["id"], r["title"]) for r in existing])
         if existing:
+            conflicts = [{"task_a": r["title"], "task_b": dto.title,
+                          "task_a_time": f'{r["start_time"]}~{r["end_time"]}',
+                          "task_b_time": f'{dto.start_time}~{dto.end_time}',
+                          "severity": "WARNING"}
+                         for r in existing]
             await conn.close()
-            return {"error": "与已有任务时间重叠", "status": "conflict_or_error"}
+            return {"error": "与已有任务时间重叠", "status": "conflict_or_error",
+                    "conflicts": conflicts}
 
         tid = await conn.fetchval(
             "INSERT INTO task (user_id,title,start_time,end_time,priority,status,location,category,tags,task_metadata) "

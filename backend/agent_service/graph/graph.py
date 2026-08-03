@@ -52,6 +52,7 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
     external_data = {}
     tasks_created = []
     actions_taken = []
+    conflicts_found = []
 
     for task in sub_tasks:
         print("EXEC TASK:", task)
@@ -86,6 +87,9 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
                 if isinstance(tool_result, dict) and tool_result.get("id"):
                     tasks_created.append(tool_result["id"])
                     actions_taken.append(f"创建任务「{tool_result.get('title', '')}」")
+                elif isinstance(tool_result, dict) and tool_result.get("conflicts"):
+                    # 冲突信息不丢 — 传给 coordinator
+                    conflicts_found.extend(tool_result["conflicts"])
             elif action in ("update_task", "update_task_tool"):
                 actions_taken.append(f"更新任务 #{params.get('task_id', '')}")
             elif action == "delete_task":
@@ -98,6 +102,8 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
         "external_data": external_data,
         "tasks_created": tasks_created,
         "actions_taken": actions_taken,
+        "conflicts_found": conflicts_found,
+        "conflict_count": len(conflicts_found),
         "tool_calls_count": limiter.count,
         "_tool_history": limiter.history,
         "error": None,
@@ -118,7 +124,9 @@ async def conflict_check_node(state: AgentState) -> dict[str, Any]:
     user_id = state.get("user_id", 0)
     calendar_events = state.get("calendar_events", [])
 
-    if not calendar_events:
+    # 保留 tools_executor 已发现的冲突
+    existing_conflicts = state.get("conflicts_found", [])
+    if not calendar_events and not existing_conflicts:
         return {"conflicts_found": [], "conflict_count": 0, "error": None}
 
     async with async_session_factory() as db:
@@ -128,7 +136,7 @@ async def conflict_check_node(state: AgentState) -> dict[str, Any]:
         tasks = await repo.find_by_user_time_range(user_id, now - timedelta(days=1), now + timedelta(days=30))
 
     if len(tasks) < 2:
-        return {"conflicts_found": [], "conflict_count": 0, "error": None}
+        return {"conflicts_found": existing_conflicts, "conflict_count": len(existing_conflicts), "error": None}
 
     detector = ConflictDetector()
     report = detector.detect(list(tasks))
@@ -265,8 +273,7 @@ def should_use_tools(state: AgentState) -> Literal["tools_executor", "reply"]:
 
 def should_check_conflicts(state: AgentState) -> Literal["conflict_check", "coordinator"]:
     """判断是否需要冲突检测"""
-    tasks_created = state.get("tasks_created", [])
-    if tasks_created:
+    if state.get("tasks_created", []) or state.get("conflicts_found", []):
         return "conflict_check"
     return "coordinator"
 
