@@ -13,27 +13,34 @@ State Validator Node — Planner 输出检查
 from typing import Any
 
 
+def _vlog(prefix, data):
+    import json
+    print(prefix, json.dumps(data, ensure_ascii=False, default=str)[:500])
+
+
 async def validator_node(state: dict) -> dict[str, Any]:
     """Planner → Validator: 检查输出完整性"""
+    _vlog("BEFORE VALIDATOR", {k: state.get(k) for k in
+        ["intent", "sub_tasks", "_needs_confirmation", "_confidence", "_source"]})
     intent = state.get("intent", "")
     sub_tasks = state.get("sub_tasks", [])
     user_input = state.get("user_input", "")
 
     # 1. intent 必须存在
     if not intent or intent in ("unknown", "chat"):
-        return {
+        r = {
             "_needs_confirmation": True,
             "_confirm_message": "请问你是想安排日程、查询安排，还是其他事务？",
             "_issues": ["intent_not_determined"],
-        }
+        }; _vlog("AFTER VALIDATOR", r); return r
 
     # 2. sub_tasks 不空
     if not sub_tasks:
-        return {
+        r = {
             "_needs_confirmation": True,
             "_confirm_message": "我理解了你的意图，但缺少执行步骤。请提供更多信息。",
             "_issues": ["no_sub_tasks"],
-        }
+        }; _vlog("AFTER VALIDATOR", r); return r
 
     # 3. 任务类意图必须检查参数
     task_intents = ("create_task", "update_task", "delete_task", "arrange_trip")
@@ -67,31 +74,27 @@ async def validator_node(state: dict) -> dict[str, Any]:
         if issues:
             # 有缺字段 → 要求确认
             if "missing_title" in issues:
-                return {
-                    "_needs_confirmation": True,
+                r = {"_needs_confirmation": True,
                     "_confirm_message": f"请问你要安排的具体事项是什么？",
-                    "_issues": issues,
-                }
+                    "_issues": issues}; _vlog("AFTER VALIDATOR", r); return r
             if "missing_time" in issues and has_start is False:
-                return {
-                    "_needs_confirmation": True,
+                r = {"_needs_confirmation": True,
                     "_confirm_message": f"请问具体是什么时间？",
-                    "_issues": issues,
-                }
+                    "_issues": issues}; _vlog("AFTER VALIDATOR", r); return r
 
     # 4. 置信度检查
     confidence = state.get("_confidence", 0.85)
     source = state.get("_source", "unknown")
     if confidence < 0.6:
-        return {
-            "_needs_confirmation": True,
+        r = {"_needs_confirmation": True,
             "_confirm_message": f"你的意思是「{user_input[:50]}」吗？我想确认一下。",
             "_issues": ["low_confidence"],
-            "_confidence": confidence,
-        }
+            "_confidence": confidence}; _vlog("AFTER VALIDATOR", r); return r
 
     # 通过
-    return {"_needs_confirmation": False, "_issues": [], "_validated": True}
+    r = {"_needs_confirmation": False, "_issues": [], "_validated": True}
+    _vlog("AFTER VALIDATOR", r)
+    return r
 
 
 def _extract_event_from_input(text: str) -> str:
