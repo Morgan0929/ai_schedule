@@ -15,6 +15,7 @@ from agent_service.llm.prompts import coordinator_prompt
 async def coordinator_node(state: AgentState) -> dict[str, Any]:
     conflicts = state.get("conflicts_found", [])
     user_input = state.get("user_input", "")
+    print("COORDINATOR INPUT:", conflicts)
 
     if not conflicts:
         return {"suggestions": [], "recommended_plan": ""}
@@ -22,9 +23,13 @@ async def coordinator_node(state: AgentState) -> dict[str, Any]:
     if is_llm_available():
         result = await _llm_coordinate(conflicts, user_input)
         if result:
-            return _conflict_output_to_state(result)
+            r = _conflict_output_to_state(result)
+            print("COORDINATOR OUTPUT:", r)
+            return r
 
-    return await _mock_coordinate(conflicts)
+    r = await _mock_coordinate(conflicts)
+    print("COORDINATOR OUTPUT:", r)
+    return r
 
 
 async def _llm_coordinate(conflicts: list[dict], user_input: str) -> ConflictOutput | None:

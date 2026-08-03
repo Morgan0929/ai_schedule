@@ -155,6 +155,11 @@ async def conflict_check_node(state: AgentState) -> dict[str, Any]:
 
 async def reply_node(state: AgentState) -> dict[str, Any]:
     """回复生成节点"""
+    import json
+    print("REPLY STATE:", json.dumps({k: state.get(k) for k in
+        ["intent", "conflicts_found", "conflict_count", "suggestions",
+         "recommended_plan", "tasks_created", "actions_taken", "calendar_events"]},
+        ensure_ascii=False, default=str)[:500])
     # Confidence Gate: 需要确认时直接返回
     if state.get("needs_confirmation"):
         msg = state.get("_confirm_message", "你是想安排一项日程，还是查询已有安排？")
