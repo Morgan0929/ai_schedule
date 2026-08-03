@@ -48,25 +48,34 @@ async def query_calendar(user_id: int, start: str = None, end: str = None,
     from timeline_service.repository.task_repo import TaskRepository
 
     # 兼容两种参数名
-    s = start or start_date or date.today().isoformat()
-    e = end or end_date or date.today().isoformat()
-
     try:
+        s = start or start_date or date.today().isoformat()
+        e = end or end_date or date.today().isoformat()
         start_dt = datetime.fromisoformat(s) if "T" not in s else datetime.fromisoformat(s)
         end_dt = datetime.fromisoformat(e) if "T" not in e else datetime.fromisoformat(e)
     except ValueError:
         start_dt = datetime.combine(date.today(), datetime.min.time())
         end_dt = datetime.combine(date.today(), datetime.max.time())
 
-    async with async_session_factory() as db:
-        repo = TaskRepository(db)
-        tasks = await repo.find_by_user_time_range(user_id, start_dt, end_dt)
-        return [
-            {
-                "id": t.id, "title": t.title, "start_time": t.start_time.isoformat(),
-                "end_time": t.end_time.isoformat(), "priority": t.priority,
-                "location": t.location, "category": t.category,
-            }
+    try:
+        import asyncpg
+        from common.config import Settings; s_cfg = Settings()
+        conn = await asyncpg.connect(
+            host=s_cfg.POSTGRES_HOST, port=s_cfg.POSTGRES_PORT,
+            user=s_cfg.POSTGRES_USER, password=s_cfg.POSTGRES_PASSWORD,
+            database=s_cfg.POSTGRES_DB, timeout=5)
+        rows = await conn.fetch(
+            "SELECT id,title,start_time,end_time,priority,location,category "
+            "FROM task WHERE user_id=$1 AND start_time < $2 AND end_time > $3 "
+            "ORDER BY start_time", user_id, end_dt, start_dt)
+        await conn.close()
+        return [{"id": r["id"], "title": r["title"],
+                 "start_time": r["start_time"].isoformat(),
+                 "end_time": r["end_time"].isoformat(),
+                 "priority": r["priority"], "location": r["location"],
+                 "category": r["category"]} for r in rows]
+    except Exception:
+        return []
             for t in tasks
         ]
 
@@ -109,15 +118,30 @@ async def create_task_tool(user_id: int, title: str, start_time: str = None,
         category=TaskCategoryEnum(category),
     )
 
-    async with async_session_factory() as db:
-        service = TaskService(db)
-        try:
-            task = await service.create_task(dto, user_id)
-            await db.commit()
-            return {"id": task.id, "title": task.title, "status": "created"}
-        except Exception as e:
-            await db.rollback()
-            return {"error": str(e), "status": "conflict_or_error"}
+    # Use asyncpg directly for remote PG (avoids SQLAlchemy greenlet on Windows)
+    try:
+        import asyncpg
+        from common.config import Settings; s = Settings()
+        conn = await asyncpg.connect(
+            host=s.POSTGRES_HOST, port=s.POSTGRES_PORT,
+            user=s.POSTGRES_USER, password=s.POSTGRES_PASSWORD,
+            database=s.POSTGRES_DB, timeout=5)
+
+        # Check conflict
+        overlap = await conn.fetchval("SELECT count(*) FROM task WHERE user_id=$1 AND start_time < $2 AND end_time > $3",
+            user_id, dto.end_time, dto.start_time)
+        if overlap:
+            await conn.close()
+            return {"error": "与已有任务时间重叠", "status": "conflict_or_error"}
+
+        tid = await conn.fetchval(
+            "INSERT INTO task (user_id,title,start_time,end_time,priority,status,location,category,tags,task_metadata) "
+            "VALUES ($1,$2,$3,$4,$5,'PENDING',$6,$7,'[]','{}') RETURNING id",
+            user_id, dto.title, dto.start_time, dto.end_time, priority, location, category)
+        await conn.close()
+        return {"id": tid, "title": dto.title, "status": "created"}
+    except Exception as e:
+        return {"error": str(e), "status": "conflict_or_error"}
 
 
 def _normalize_datetime(dt_str: str, is_end: bool = False, reference_start: str = None) -> str:
