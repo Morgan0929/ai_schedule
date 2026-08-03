@@ -78,9 +78,11 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
             tool_result = result.get("result", {})
 
             if action in ("query_calendar", "check_calendar"):
+                print("CHECK RESULT:", tool_result)
                 if isinstance(tool_result, list):
                     calendar_events.extend(tool_result)
             elif action == "create_task":
+                print("CREATE RESULT:", tool_result)
                 if isinstance(tool_result, dict) and tool_result.get("id"):
                     tasks_created.append(tool_result["id"])
                     actions_taken.append(f"创建任务「{tool_result.get('title', '')}」")
