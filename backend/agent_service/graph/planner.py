@@ -67,7 +67,7 @@ def _detect_event_statement(text: str) -> dict[str, Any]:
     """
     事件陈述检测 (不靠关键词)
 
-    判断逻辑: 有未来时间 + 有事件描述 → create_task
+    判断逻辑: 有未来时间 + 有事件描述 → create_event
     """
     from agent_service.llm.mock_agent import _extract_time, _extract_hour
     from datetime import date as date_type
@@ -112,7 +112,7 @@ def _detect_event_statement(text: str) -> dict[str, Any]:
             entities["start_time"] = f"{d.isoformat()}T{hour:02d}:00:00"
 
         return {
-            "intent": "create_task",
+            "intent": "create_event",
             "sub_tasks": [
                 {"action": "check_calendar", "params": entities},
                 {"action": "create_task", "params": entities},
@@ -141,9 +141,11 @@ def _planner_output_to_state(result: PlannerOutput) -> dict[str, Any]:
 
     # 意图 → 动作映射 (不依赖 LLM 填 tool 字段)
     intent_to_action = {
-        "create_task": "create_task",
-        "delete_task": "delete_task",
-        "update_task": "update_task",
+        "create_event": "create_task",
+        "create_todo": "create_task",
+        "create_reminder": "create_task",
+        "delete_event": "delete_task",
+        "update_event": "update_task",
         "query_schedule": "check_calendar",
         "query_calendar": "check_calendar",
         "query_weather": "query_weather",
@@ -153,7 +155,7 @@ def _planner_output_to_state(result: PlannerOutput) -> dict[str, Any]:
     if action:
         sub_tasks.append({"action": action, "params": entities.copy()})
 
-    if intent in ("create_task", "update_task", "arrange_trip"):
+    if intent in ("create_event", "create_todo", "create_reminder", "update_event", "arrange_trip"):
         sub_tasks.insert(0, {"action": "check_calendar", "params": entities})
     if intent == "arrange_trip":
         sub_tasks.append({"action": "query_weather", "params": entities})

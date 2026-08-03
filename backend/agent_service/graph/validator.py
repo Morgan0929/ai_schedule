@@ -43,7 +43,7 @@ async def validator_node(state: dict) -> dict[str, Any]:
         }; _vlog("AFTER VALIDATOR", r); return r
 
     # 3. 任务类意图必须检查参数
-    task_intents = ("create_task", "update_task", "delete_task", "arrange_trip")
+    task_intents = ("create_event", "create_todo", "create_reminder", "update_event", "delete_event", "arrange_trip")
     if intent in task_intents:
         issues = []
         task_params = {}
@@ -58,7 +58,7 @@ async def validator_node(state: dict) -> dict[str, Any]:
         has_end = task_params.get("end_time") or task_params.get("end")
 
         # 缺标题 → 从原始输入提取
-        if not title and intent == "create_task":
+        if not title and intent in ("create_event", "create_todo", "create_reminder"):
             # 尝试用之前的事件检测逻辑
             title = _extract_event_from_input(user_input)
             if title:

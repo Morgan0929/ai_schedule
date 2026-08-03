@@ -40,7 +40,7 @@ def detect_intent(user_input: str) -> dict[str, Any]:
         # 区分：纯查询 vs 创建
         if any(w in text for w in ["查看", "查询", "看看", "有没有", "有什么", "检查"]):
             return {"intent": "QUERY_CALENDAR", "entities": _extract_time(text), "confidence": 0.8}
-        return {"intent": "CREATE_TASK", "entities": _extract_task_info(text), "confidence": 0.85}
+        return {"intent": "CREATE_EVENT", "entities": _extract_task_info(text), "confidence": 0.85}
 
     # 出差/航班（在普通查询之前检查）
     if any(w in text for w in ["出差", "飞", "航班", "机票", "订票", "出行"]):

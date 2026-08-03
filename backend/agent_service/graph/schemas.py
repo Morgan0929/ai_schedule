@@ -15,9 +15,11 @@ from pydantic import BaseModel, Field
 class PlannerOutput(BaseModel):
     """Planner Node: 意图识别结果 (with confidence + source)"""
     intent: Literal[
-        "create_task", "CREATE_TASK",
-        "delete_task", "DELETE_TASK",
-        "update_task", "UPDATE_TASK",
+        "create_event", "CREATE_EVENT",
+        "create_todo", "CREATE_TODO",
+        "create_reminder", "CREATE_REMINDER",
+        "delete_event", "DELETE_EVENT",
+        "update_event", "UPDATE_EVENT",
         "query_schedule", "QUERY_SCHEDULE", "QUERY_CALENDAR",
         "query_weather", "QUERY_WEATHER",
         "arrange_trip", "ARRANGE_TRIP",

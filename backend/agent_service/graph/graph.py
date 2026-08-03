@@ -54,7 +54,8 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
     actions_taken = []
 
     for task in sub_tasks:
-        # === Middleware: Tool Call Limit ===
+        print("EXEC TASK:", task)
+
         if not limiter.allow():
             actions_taken.append(
                 f"[LIMIT] 已达最大工具调用次数({MAX_TOOL_CALLS})，跳过后面的操作"
@@ -63,6 +64,7 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
 
         action = task.get("action", "")
         params = task.get("params", {})
+        print("ACTION:", action)
 
         # === Middleware: Tool Retry (with_retry 包装) ===
         @with_retry(max_attempts=2, base_delay=1.0)

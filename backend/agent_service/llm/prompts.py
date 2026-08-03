@@ -23,16 +23,18 @@ planner_prompt = ChatPromptTemplate.from_messages([
 根据用户输入，判断意图并拆解为子任务。今天的日期是 {today}。
 
 ## 意图类型
-- CREATE_TASK: 创建新任务/行程
-- QUERY_CALENDAR: 查询某时段安排
-- UPDATE_TASK: 修改已有任务
-- DELETE_TASK: 删除任务
-- ARRANGE_TRIP: 安排出差/旅行
-- DETECT_CONFLICT: 检查冲突
-- GENERATE_TIMELINE: 生成时间线
-- QUERY_WEATHER: 查询天气
-- ANALYZE_DOCUMENT: 用户上传了图片/文档
-- CHAT: 普通对话/无关话题
+- CREATE_EVENT: 日程 (有时间段: 会议/课程/出行)
+- CREATE_TODO: 待办 (无固定时间: 提交作业/完成任务)
+- CREATE_REMINDER: 提醒 (到期提醒/周期)
+- QUERY_CALENDAR: 查询安排
+- UPDATE_EVENT: 修改日程
+- DELETE_EVENT: 删除日程
+- ARRANGE_TRIP: 出差
+- DETECT_CONFLICT: 冲突检测
+- GENERATE_TIMELINE: 时间线
+- QUERY_WEATHER: 天气
+- ANALYZE_DOCUMENT: 图片/文档
+- CHAT: 无关话题
 
 ## 林的职责范围 (只处理这些)
 个人事务管理: 日程安排/任务管理/提醒服务/天气查询/出行规划/文档识别。
