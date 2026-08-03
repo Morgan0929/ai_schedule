@@ -131,9 +131,12 @@ async def conflict_check_node(state: AgentState) -> dict[str, Any]:
 
 
 async def reply_node(state: AgentState) -> dict[str, Any]:
-    """
-    回复生成节点：汇总所有信息，生成最终回复
-    """
+    """回复生成节点"""
+    # Confidence Gate: 需要确认时直接返回
+    if state.get("_needs_confirmation"):
+        msg = state.get("_confirm_message", "你是想安排一项日程，还是查询已有安排？")
+        return {"final_reply": msg}
+
     intent = state.get("intent", "CHAT")
     user_input = state.get("user_input", "")
     actions = state.get("actions_taken", [])

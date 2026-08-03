@@ -70,71 +70,105 @@ def detect_intent(user_input: str) -> dict[str, Any]:
 
 def _extract_time(text: str) -> dict:
     """提取时间信息（日期 + 具体时间）"""
-    result = {}
+    import re
     today = date.today()
-    hour = None
-    minute = 0
 
-    # 提取具体时间
-    hour = _extract_hour(text)
+    # 提取具体时间（含"半"）
+    hour, minute = _extract_hour_minute(text)
 
     # 提取日期
+    day_names = {"周一":0,"周二":1,"周三":2,"周四":3,"周五":4,"周六":5,"周日":6,
+                 "星期一":0,"星期二":1,"星期三":2,"星期四":3,"星期五":4,"星期六":5,"星期日":6}
+
+    d = today
     if "明天" in text:
         d = today + timedelta(days=1)
     elif "后天" in text:
         d = today + timedelta(days=2)
     elif "下周" in text:
-        days_until_monday = 7 - today.weekday()
-        d = today + timedelta(days=days_until_monday)
+        for name, wd in day_names.items():
+            if name in text:
+                days = (7 - today.weekday()) + wd
+                d = today + timedelta(days=days)
+                break
+        else:
+            days_until_monday = 7 - today.weekday()
+            d = today + timedelta(days=days_until_monday)
     elif "这周" in text or "本周" in text:
-        days_since_monday = today.weekday()
-        d = today - timedelta(days=days_since_monday)
-    else:
-        d = today
+        for name, wd in day_names.items():
+            if name in text:
+                days = wd - today.weekday()
+                if days < 0: days += 7
+                d = today + timedelta(days=days)
+                break
+        else:
+            d = today - timedelta(days=today.weekday())
+    elif "下个月" in text:
+        d = today.replace(day=1) + timedelta(days=32)
+        d = d.replace(day=1)
+    elif any(name in text for name in day_names):
+        for name, wd in day_names.items():
+            if name in text:
+                days = wd - today.weekday()
+                if days <= 0: days += 7
+                d = today + timedelta(days=days)
+                break
 
-    # 构建带时间的 ISO 字符串
+    # 构建 ISO 字符串
     if hour is not None:
-        result["start"] = f"{d.isoformat()}T{hour:02d}:{minute:02d}:00"
-        result["end"] = f"{d.isoformat()}T{hour + 1:02d}:{minute:02d}:00"
+        result = {
+            "start": f"{d.isoformat()}T{hour:02d}:{minute:02d}:00",
+            "end": f"{d.isoformat()}T{hour + 1:02d}:{minute:02d}:00",
+        }
     else:
-        result["start"] = d.isoformat()
-        result["end"] = d.isoformat()
-
+        result = {"start": d.isoformat(), "end": d.isoformat()}
     return result
 
 
-def _extract_hour(text: str) -> int | None:
-    """
-    从文本中提取具体小时
-
-    支持: 下午3点, 上午10点, 3点, 4点30, 晚上8点, 中午12点
-    """
+def _extract_hour_minute(text: str) -> tuple:
+    """提取小时和分钟, 支持 '下午3点半' → (15, 30)"""
     import re
 
-    # 匹配模式: [上午/下午/晚上] N 点 [M 分]
-    patterns = [
-        r'(下午|晚上|傍晚)\s*(\d{1,2})\s*点(?:\s*(\d{1,2})\s*分)?',
-        r'(上午|早上|早晨)\s*(\d{1,2})\s*点(?:\s*(\d{1,2})\s*分)?',
-        r'(?<![上下晚早])[\s](\d{1,2})\s*点(?:\s*(\d{1,2})\s*分)?',
-        r'^(\d{1,2})\s*点(?:\s*(\d{1,2})\s*分)?',
-    ]
+    hour, minute = None, 0
 
-    for pattern in patterns:
-        match = re.search(pattern, text)
-        if match:
-            groups = match.groups()
-            if groups[0] and groups[0] in ('下午', '晚上', '傍晚'):
-                h = int(groups[1])
-                return h + 12 if h != 12 else h
-            elif groups[0] and groups[0] in ('上午', '早上', '早晨'):
-                h = int(groups[1])
-                return h if h != 12 else 0
-            elif groups[0] and groups[0].isdigit():
-                return int(groups[0])
-            elif len(groups) >= 2 and groups[0] is None and groups[1]:
-                return int(groups[1])
+    # "下午3点半" / "上午10点" / "晚上8点" / "3点30分"
+    m = re.search(r'(下午|晚上|傍晚|中午)\s*(\d{1,2})\s*点\s*(半|(\d{1,2})\s*分)?', text)
+    if not m:
+        m = re.search(r'(上午|早上|早晨)\s*(\d{1,2})\s*点\s*(半|(\d{1,2})\s*分)?', text)
+    if not m:
+        m = re.search(r'(?<![上下晚早中午])[\s](\d{1,2})\s*点\s*(半|(\d{1,2})\s*分)?', text)
+    if not m:
+        m = re.search(r'^(\d{1,2})\s*点\s*(半|(\d{1,2})\s*分)?', text)
 
-    return None
+    if m:
+        groups = m.groups()
+        period = groups[0] if groups[0] else ""
+        h = int(groups[1])
+        half_or_min = groups[2] if len(groups) > 2 else None
+
+        if half_or_min == "半":
+            minute = 30
+        elif half_or_min and half_or_min.isdigit():
+            minute = int(half_or_min)
+
+        if period in ('下午', '晚上', '傍晚'):
+            hour = h + 12 if h != 12 else h
+        elif period in ('上午', '早上', '早晨'):
+            hour = h if h != 12 else 0
+        elif period == '中午':
+            hour = 12
+        elif groups[0] and groups[0].isdigit():
+            hour = h
+        else:
+            hour = h
+
+    return hour, minute
+
+
+def _extract_hour(text: str) -> int | None:
+    """兼容旧接口"""
+    h, _ = _extract_hour_minute(text)
+    return h
 
 
 def _extract_city(text: str) -> dict:

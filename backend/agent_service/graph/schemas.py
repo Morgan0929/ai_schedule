@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 # ============================================================
 
 class PlannerOutput(BaseModel):
-    """Planner Node: 意图识别结果"""
+    """Planner Node: 意图识别结果 (with confidence + source)"""
     intent: Literal[
         "create_task", "CREATE_TASK",
         "delete_task", "DELETE_TASK",
@@ -24,11 +24,15 @@ class PlannerOutput(BaseModel):
         "image_analysis", "IMAGE_ANALYSIS",
         "detect_conflict", "DETECT_CONFLICT",
         "chat", "CHAT",
-    ] = Field(description="用户意图类型 (case-insensitive)")
+        "unknown", "UNKNOWN",
+    ] = Field(description="用户意图类型")
 
-    tool: str | None = Field(default=None, description="需要调用的工具名称")
-    entities: dict[str, Any] = Field(default_factory=dict, description="提取的实体信息")
-    need_confirmation: bool = Field(default=False, description="是否需要用户确认后再执行")
+    tool: str | None = Field(default=None, description="工具名称")
+    entities: dict[str, Any] = Field(default_factory=dict, description="提取的实体")
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="置信度")
+    source: str = Field(default="mock", description="识别来源: llm / mock")
+    reason: str = Field(default="", description="为什么判定为该意图")
+    need_confirmation: bool = Field(default=False, description="是否需要用户确认")
 
 
 # ============================================================
