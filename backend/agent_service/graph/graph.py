@@ -240,6 +240,10 @@ def _needs_confirmation(state: AgentState) -> Literal["reply", "tools_executor"]
 def should_use_tools(state: AgentState) -> Literal["tools_executor", "reply"]:
     """判断是否需要执行工具"""
     sub_tasks = state.get("sub_tasks", [])
+    print("===================")
+    print("intent:", state.get("intent"))
+    print("sub_tasks:", sub_tasks)
+    print("===================")
     if sub_tasks:
         return "tools_executor"
     return "reply"

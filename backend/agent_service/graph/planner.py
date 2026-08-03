@@ -21,7 +21,10 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
     if is_llm_available():
         result = await _llm_plan(user_input)
         if result and result.intent != "unknown":
-            return _planner_output_to_state(result)
+            state_update = _planner_output_to_state(result)
+            import json
+            print("PLANNER STATE=", json.dumps(state_update, ensure_ascii=False, indent=2, default=str)[:1000])
+            return state_update
 
     # Event 检测 (mock, 不靠关键词)
     event_result = _detect_event_statement(user_input)
@@ -53,9 +56,10 @@ async def _llm_plan(user_input: str) -> PlannerOutput | None:
             result.source = "llm"
             if not result.confidence:
                 result.confidence = 0.85
+            print("RAW PLANNER OUTPUT=", result.model_dump_json(indent=2))
             return result
-    except Exception:
-        pass
+    except Exception as e:
+        print("RAW PLANNER OUTPUT FAILED:", e)
     return None
 
 
