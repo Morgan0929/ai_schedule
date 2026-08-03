@@ -181,6 +181,7 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
 
     # === Middleware: Todo Extraction ===
     from agent_service.middleware.todo_extractor import TodoExtractor
+    user_input = state.get("user_input", "")
     todos = await TodoExtractor.extract(user_input)
     if todos:
         # 追加待办提示
