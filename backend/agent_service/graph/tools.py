@@ -338,6 +338,8 @@ async def search_knowledge(user_id: int, query: str, top_k: int = 3) -> list[dic
     return {"documents": docs, "memories": mems}
 
 
+
+
 # ============ 工具注册表 ============
 
 TOOL_MAP = {
@@ -368,21 +370,3 @@ TOOL_MAP = {
 }
 
 
-# ============ MCP 工具函数 (外部能力) ============
-
-async def mcp_weather_current(user_id: int, city: str = "北京") -> dict:
-    """MCP: 获取当前天气"""
-    from agent_service.mcp.client import call_mcp_tool
-    return await call_mcp_tool("weather", "get_current_weather", {"city": city})
-
-
-async def mcp_weather_forecast(user_id: int, city: str = "北京", days: int = 2) -> dict:
-    """MCP: 获取天气预报"""
-    from agent_service.mcp.client import call_mcp_tool
-    return await call_mcp_tool("weather", "get_forecast", {"city": city, "days": days})
-
-
-async def mcp_web_search(user_id: int, query: str, max_results: int = 5) -> dict:
-    """MCP: 网页搜索"""
-    from agent_service.mcp.client import call_mcp_tool
-    return await call_mcp_tool("search", "web_search", {"query": query, "max_results": max_results})
