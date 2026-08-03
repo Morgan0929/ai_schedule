@@ -20,6 +20,7 @@ class AgentChatRequest(BaseModel):
     message: str = Field(..., min_length=1, description="用户自然语言输入")
     session_id: str | None = Field(None, description="会话 ID，不传则新建会话")
     user_id: int | None = Field(None, description="用户 ID")
+    history: list[dict[str, str]] = Field(default_factory=list, description="对话历史 [{\"role\":\"user/assistant\",\"content\":\"...\"}]")
     context: dict[str, Any] = Field(default_factory=dict, description="额外上下文")
 
 

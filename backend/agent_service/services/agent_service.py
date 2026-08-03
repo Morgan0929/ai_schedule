@@ -50,7 +50,8 @@ class AgentService:
                              user_input=request.message)
 
         initial_state: AgentState = {
-            "messages": [], "user_input": request.message,
+            "messages": AgentService._build_messages(request.history),
+            "user_input": request.message,
             "user_id": request.user_id or 0, "session_id": session_id,
             "intent": "", "sub_tasks": [],
             "calendar_events": [], "external_data": {},
@@ -84,6 +85,25 @@ class AgentService:
             yield f"sorry, error: {e}"
 
     @staticmethod
+    def _build_messages(history: list[dict], max_rounds: int = 50) -> list:
+        """从 history 构建 messages，保留最近 max_rounds 轮"""
+        from langchain_core.messages import HumanMessage, AIMessage
+        messages = []
+        # 只取最近 100 条 (50 轮), 多的做摘要标记
+        recent = history[-max_rounds * 2:] if len(history) > max_rounds * 2 else history
+        if len(history) > max_rounds * 2:
+            skipped = len(history) - len(recent)
+            messages.append(HumanMessage(content=f"[更早的{skipped}条消息已省略]"))
+        for m in recent:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if role in ("user", "human"):
+                messages.append(HumanMessage(content=content))
+            else:
+                messages.append(AIMessage(content=content))
+        return messages
+
+    @staticmethod
     async def chat(request: AgentChatRequest) -> AgentChatResponse:
         """非流式对话 — LangGraph 工作流 + Memory + Trace"""
         session_id = request.session_id or str(uuid.uuid4())[:8]
@@ -92,7 +112,8 @@ class AgentService:
                              user_input=request.message)
 
         initial_state: AgentState = {
-            "messages": [], "user_input": request.message,
+            "messages": AgentService._build_messages(request.history),
+            "user_input": request.message,
             "user_id": request.user_id or 0, "session_id": session_id,
             "intent": "", "sub_tasks": [],
             "calendar_events": [], "external_data": {},
