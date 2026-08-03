@@ -76,8 +76,6 @@ async def query_calendar(user_id: int, start: str = None, end: str = None,
                  "category": r["category"]} for r in rows]
     except Exception:
         return []
-            for t in tasks
-        ]
 
 
 # ============ 任务 CRUD ============
