@@ -28,7 +28,7 @@ class AgentChatResponse(BaseModel):
     """Agent 对话响应"""
     reply: str = Field(..., description="AI 回复")
     session_id: str = Field(..., description="会话 ID")
-    conflicts: list["ConflictDTO"] = Field(default_factory=list, description="检测到的冲突列表")
+    conflicts: list[dict] = Field(default_factory=list, description="检测到的冲突列表")
     suggestions: list[AgentSuggestion] = Field(default_factory=list, description="建议方案")
     tasks_created: list[int] = Field(default_factory=list, description="新创建的任务 ID 列表")
     tasks_updated: list[int] = Field(default_factory=list, description="已更新的任务 ID 列表")
