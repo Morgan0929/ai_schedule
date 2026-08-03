@@ -156,7 +156,12 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
         city = weather.get("city", "")
         summary_parts.append(f"天气: {city} {temp}°C {desc} 湿度{hum}%")
     if calendar_events:
-        summary_parts.append(f"📅 查询到 {len(calendar_events)} 个相关日程")
+        lines = [f"日程 ({len(calendar_events)}个):"]
+        for ev in calendar_events[:10]:
+            title = ev.get("title", "?")
+            st = ev.get("start_time", "")[:16]
+            lines.append(f"  - {st} {title}")
+        summary_parts.append("\n".join(lines))
     if conflicts:
         summary_parts.append(f"⚠️ 发现 {len(conflicts)} 个时间冲突")
         for c in conflicts:

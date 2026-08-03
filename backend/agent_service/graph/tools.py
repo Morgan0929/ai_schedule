@@ -85,15 +85,20 @@ async def create_task_tool(user_id: int, title: str, start_time: str = None,
     st = start_time or start
     et = end_time or end
 
-    # 如果没有给时间，用默认值
+    # 日期补全时间（先补再处理缺失）
+    if st:
+        st = _normalize_datetime(st)
+    if et:
+        et = _normalize_datetime(et)
+
+    # 缺 start → 默认 now+1h; 缺 end → start+1h
     if not st:
         st = (datetime.now() + timedelta(hours=1)).isoformat()
+        st = _normalize_datetime(st)
     if not et:
-        et = (datetime.now() + timedelta(hours=2)).isoformat()
-
-    # 日期补全时间
-    st = _normalize_datetime(st)
-    et = _normalize_datetime(et, is_end=True, reference_start=st)
+        from datetime import datetime as dt_cls
+        st_dt = dt_cls.fromisoformat(st)
+        et = (st_dt + timedelta(hours=1)).isoformat()
 
     dto = TaskCreateDTO(
         title=title,
