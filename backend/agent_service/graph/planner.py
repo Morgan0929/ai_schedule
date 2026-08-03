@@ -96,9 +96,10 @@ def _detect_event_statement(text: str) -> dict[str, Any]:
     for w in time_words:
         event_title = event_title.replace(w, "")
     event_title = event_title.strip().strip("，,。.；;：:！!？?")
-    # 过滤掉问句/通用短语（不是真正的事件）
-    query_words = ["什么", "怎么", "吗", "呢", "如何", "安排", "有没有", "查看", "查询", "日程"]
-    is_query = any(qw in event_title for qw in query_words) or "?" in text or "？" in text
+    # 疑问词 → query_event, 不是 create_event
+    question_words = ["什么", "怎么", "吗", "呢", "如何", "有没有", "查看", "查询",
+                      "啥", "谁", "哪里", "干嘛", "干啥", "有什么事", "有什么安排"]
+    is_query = any(qw in text for qw in question_words) or "?" in text or "？" in text
     has_event = len(event_title) >= 2 and not is_query
 
     if has_time and has_event:

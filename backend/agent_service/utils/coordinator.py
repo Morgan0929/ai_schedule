@@ -24,11 +24,15 @@ async def coordinator_node(state: AgentState) -> dict[str, Any]:
     if is_llm_available():
         llm_result = await _llm_coordinate(conflicts, user_input)
         if llm_result:
+            suggestions = _extract_suggestions(llm_result)
+            # 不替用户决定 — 所有方案平等, 等用户选
+            for s in suggestions:
+                s["is_recommended"] = False
             r = {
                 "conflicts_found": conflicts,
                 "conflict_count": len(conflicts),
-                "suggestions": _extract_suggestions(llm_result),
-                "recommended_plan": llm_result.recommended_plan if hasattr(llm_result, 'recommended_plan') else "A",
+                "suggestions": suggestions,
+                "recommended_plan": "",  # 等用户选择
             }
             print("COORDINATOR OUTPUT:", r)
             return r

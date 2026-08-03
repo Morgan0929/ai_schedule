@@ -174,6 +174,20 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
     suggestions = state.get("suggestions", [])
     external_data = state.get("external_data", {})
 
+    # 冲突优先级最高: 有冲突时只展示冲突, 不展示创建成功
+    if conflicts and suggestions:
+        parts = [f"时间冲突 ({len(conflicts)}个):"]
+        for c in conflicts:
+            a, b = c.get("task_a", "?"), c.get("task_b", "?")
+            ta = c.get("task_a_time", "")
+            parts.append(f"  已有「{a}」{ta}")
+            parts.append(f"  新增「{b}」{c.get('task_b_time','')}")
+        parts.append(f"\n可选方案:")
+        for s in suggestions:
+            tag = "推荐" if s.get("is_recommended") else "备选"
+            parts.append(f"  [{s.get('plan_id','?')}] {tag} {s.get('title','')}")
+        return {"final_reply": "\n".join(parts)}
+
     # 构建结构化摘要
     summary_parts = []
     if actions:
