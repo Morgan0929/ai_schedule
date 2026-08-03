@@ -47,12 +47,22 @@ async def query_calendar(user_id: int, start: str = None, end: str = None,
     """查询用户日历"""
     from timeline_service.repository.task_repo import TaskRepository
 
-    # 兼容两种参数名
+    # 范围查询: 有 start_time 则窗口±2h, 没给则全天
     try:
-        s = start or start_date or date.today().isoformat()
-        e = end or end_date or date.today().isoformat()
-        start_dt = datetime.fromisoformat(s) if "T" not in s else datetime.fromisoformat(s)
-        end_dt = datetime.fromisoformat(e) if "T" not in e else datetime.fromisoformat(e)
+        if start or start_date:
+            s = start or start_date
+            start_dt = datetime.fromisoformat(s) if "T" in str(s) else datetime.fromisoformat(str(s))
+            # end 默认 start+2h, 或当天结束
+            if end or end_date:
+                e = end or end_date
+                end_dt = datetime.fromisoformat(e) if "T" in str(e) else datetime.fromisoformat(str(e))
+            elif "T" in str(s):
+                end_dt = start_dt + timedelta(hours=2)
+            else:
+                end_dt = datetime.combine(start_dt.date(), datetime.max.time())
+        else:
+            start_dt = datetime.combine(date.today(), datetime.min.time())
+            end_dt = datetime.combine(date.today(), datetime.max.time())
     except ValueError:
         start_dt = datetime.combine(date.today(), datetime.min.time())
         end_dt = datetime.combine(date.today(), datetime.max.time())

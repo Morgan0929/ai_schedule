@@ -95,7 +95,12 @@ def _detect_event_statement(text: str) -> dict[str, Any]:
     event_title = text
     for w in time_words:
         event_title = event_title.replace(w, "")
-    event_title = event_title.strip().strip("，,。.；;：:！!？?")
+    event_title = event_title.strip().strip("，,。.；;：:！!？? ")
+    # 标题清洗: 去掉引导词
+    for prefix in ["我要去", "我要", "我想去", "我想", "帮我", "记一下", "提醒我", "安排"]:
+        if event_title.startswith(prefix):
+            event_title = event_title[len(prefix):]
+            break
     # 疑问词 → query_event, 不是 create_event
     question_words = ["什么", "怎么", "吗", "呢", "如何", "有没有", "查看", "查询",
                       "啥", "谁", "哪里", "干嘛", "干啥", "有什么事", "有什么安排"]
