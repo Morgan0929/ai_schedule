@@ -66,21 +66,34 @@ def _detect_event_statement(text: str) -> dict[str, Any]:
     判断逻辑: 有未来时间 + 有事件描述 → create_task
     """
     from agent_service.llm.mock_agent import _extract_time, _extract_hour
+    from datetime import date as date_type
 
     time_info = _extract_time(text)
     hour = _extract_hour(text)
+    # 有具体小时 或 解析出的日期在未来 → 有时间
     has_time = hour is not None or "T" in time_info.get("start", "")
+    if not has_time:
+        try:
+            parsed_date = date_type.fromisoformat(time_info.get("start", ""))
+            has_time = parsed_date > date_type.today()
+        except (ValueError, TypeError):
+            pass
 
     # 去掉时间词，剩余文本作为事件名
     time_words = ["明天", "后天", "下周", "这周", "今天", "上午", "下午", "晚上",
                   "周一", "周二", "周三", "周四", "周五", "周六", "周日",
+                  "下个月", "下周三", "下周一", "下周二", "下周四", "下周五",
                   "1点", "2点", "3点", "4点", "5点", "6点", "7点", "8点",
-                  "9点", "10点", "11点", "12点"]
+                  "9点", "10点", "11点", "12点",
+                  "提醒我", "帮我", "帮我安排", "提醒"]
     event_title = text
     for w in time_words:
         event_title = event_title.replace(w, "")
-    event_title = event_title.strip().strip("，,。.；;：:！!")
-    has_event = len(event_title) >= 2
+    event_title = event_title.strip().strip("，,。.；;：:！!？?")
+    # 过滤掉问句/通用短语（不是真正的事件）
+    query_words = ["什么", "怎么", "吗", "呢", "如何", "安排", "有没有", "查看", "查询", "日程"]
+    is_query = any(qw in event_title for qw in query_words) or "?" in text or "？" in text
+    has_event = len(event_title) >= 2 and not is_query
 
     if has_time and has_event:
         entities = {"title": event_title, **time_info}
