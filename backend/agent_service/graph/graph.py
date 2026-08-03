@@ -272,8 +272,10 @@ def should_use_tools(state: AgentState) -> Literal["tools_executor", "reply"]:
 
 
 def should_check_conflicts(state: AgentState) -> Literal["conflict_check", "coordinator"]:
-    """判断是否需要冲突检测"""
-    if state.get("tasks_created", []) or state.get("conflicts_found", []):
+    """有冲突直接进coordinator, 不重复检测"""
+    if state.get("conflicts_found", []):
+        return "coordinator"
+    if state.get("tasks_created", []):
         return "conflict_check"
     return "coordinator"
 
