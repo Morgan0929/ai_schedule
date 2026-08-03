@@ -20,14 +20,24 @@ async def coordinator_node(state: AgentState) -> dict[str, Any]:
     if not conflicts:
         return {"suggestions": [], "recommended_plan": ""}
 
+    # LLM 只负责建议, 不改 conflicts_found (数据库说了算)
     if is_llm_available():
-        result = await _llm_coordinate(conflicts, user_input)
-        if result:
-            r = _conflict_output_to_state(result)
+        llm_result = await _llm_coordinate(conflicts, user_input)
+        if llm_result:
+            r = {
+                "conflicts_found": conflicts,
+                "conflict_count": len(conflicts),
+                "suggestions": _extract_suggestions(llm_result),
+                "recommended_plan": llm_result.recommended_plan if hasattr(llm_result, 'recommended_plan') else "A",
+            }
             print("COORDINATOR OUTPUT:", r)
             return r
 
-    r = await _mock_coordinate(conflicts)
+    r = {
+        "conflicts_found": conflicts,
+        "conflict_count": len(conflicts),
+        **_mock_coordinate(conflicts),
+    }
     print("COORDINATOR OUTPUT:", r)
     return r
 
@@ -50,22 +60,23 @@ async def _llm_coordinate(conflicts: list[dict], user_input: str) -> ConflictOut
     return None
 
 
-def _conflict_output_to_state(result: ConflictOutput) -> dict[str, Any]:
-    """将 ConflictOutput 转为 AgentState 格式"""
+def _extract_suggestions(result: ConflictOutput) -> list[dict]:
+    """从 LLM 输出提取建议, 不改 conflicts_found"""
     suggestions = []
     for i, sol in enumerate(result.solutions):
         plan_id = chr(ord("A") + i) if i < 26 else str(i)
         suggestions.append({
-            "plan_id": plan_id,
-            "title": sol,
+            "plan_id": plan_id, "title": sol,
             "is_recommended": i == 0,
         })
+    return suggestions
 
+
+def _conflict_output_to_state(result: ConflictOutput) -> dict[str, Any]:
+    """已废弃 — 保留兼容, 不再覆盖 conflicts_found"""
     return {
-        "conflicts_found": [{"reason": c} for c in result.conflicts],
-        "conflict_count": len(result.conflicts),
-        "suggestions": suggestions,
-        "recommended_plan": "A" if suggestions else "",
+        "suggestions": _extract_suggestions(result),
+        "recommended_plan": "A",
     }
 
 

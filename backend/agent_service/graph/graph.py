@@ -194,9 +194,14 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
             lines.append(f"  - {st} {title}")
         summary_parts.append("\n".join(lines))
     if conflicts:
-        summary_parts.append(f"⚠️ 发现 {len(conflicts)} 个时间冲突")
+        summary_parts.append(f"发现 {len(conflicts)} 个时间冲突")
         for c in conflicts:
-            summary_parts.append(f"  • {c.get('reason', '')}")
+            a, b = c.get("task_a", "?"), c.get("task_b", "?")
+            ta = c.get("task_a_time", "")
+            tb = c.get("task_b_time", "")
+            summary_parts.append(f"  「{a}」vs「{b}」")
+            if ta: summary_parts.append(f"    已有: {ta}")
+            if tb: summary_parts.append(f"    新增: {tb}")
     if suggestions:
         summary_parts.append("💡 建议方案:")
         for s in suggestions:
