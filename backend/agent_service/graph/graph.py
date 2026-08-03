@@ -135,6 +135,7 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
     回复生成节点：汇总所有信息，生成最终回复
     """
     intent = state.get("intent", "CHAT")
+    user_input = state.get("user_input", "")
     actions = state.get("actions_taken", [])
     tasks_created = state.get("tasks_created", [])
     conflicts = state.get("conflicts_found", [])
@@ -190,12 +191,11 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
             {"role": "user", "content": msgs[1].content},
         ], temperature=0.7, max_tokens=512)
     else:
-        final_reply = await mock_chat(state.get("user_input", ""))
+        final_reply = await mock_chat(user_input)
 
     # === Middleware: Todo Extraction (跳过拒绝/chat场景) ===
     if intent.lower() != "chat":
         from agent_service.middleware.todo_extractor import TodoExtractor
-        user_input = state.get("user_input", "")
         todos = await TodoExtractor.extract(user_input)
     else:
         todos = []
