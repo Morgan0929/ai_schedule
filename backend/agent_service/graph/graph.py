@@ -176,13 +176,29 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
         ], temperature=0.7, max_tokens=1024)
     elif structured_info:
         final_reply = f"{structured_info}"
+    elif intent.lower() == "chat" and is_llm_available():
+        # 无关事务 → 用林的 System Prompt 生成拒绝回复
+        from agent_service.llm.prompts import LIN_SYSTEM_PROMPT, reply_prompt
+        reject_prompt = reply_prompt.invoke({
+            "structured_info": "用户提出了与个人事务管理无关的请求。请礼貌地拒绝，并说明你的职责范围。",
+            "intent": "CHAT",
+            "user_input": user_input,
+        })
+        msgs = reject_prompt.to_messages()
+        final_reply = await chat_completion([
+            {"role": "system", "content": msgs[0].content},
+            {"role": "user", "content": msgs[1].content},
+        ], temperature=0.7, max_tokens=512)
     else:
         final_reply = await mock_chat(state.get("user_input", ""))
 
-    # === Middleware: Todo Extraction ===
-    from agent_service.middleware.todo_extractor import TodoExtractor
-    user_input = state.get("user_input", "")
-    todos = await TodoExtractor.extract(user_input)
+    # === Middleware: Todo Extraction (跳过拒绝/chat场景) ===
+    if intent.lower() != "chat":
+        from agent_service.middleware.todo_extractor import TodoExtractor
+        user_input = state.get("user_input", "")
+        todos = await TodoExtractor.extract(user_input)
+    else:
+        todos = []
     if todos:
         # 追加待办提示
         todo_text = "\n\n📋 自动识别到的待办:\n" + "\n".join(
