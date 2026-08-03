@@ -135,8 +135,19 @@ def _planner_output_to_state(result: PlannerOutput) -> dict[str, Any]:
     sub_tasks = []
     entities = result.entities or {}
 
-    if result.tool:
-        sub_tasks.append({"action": result.tool, "params": entities.copy()})
+    # 意图 → 动作映射 (不依赖 LLM 填 tool 字段)
+    intent_to_action = {
+        "create_task": "create_task",
+        "delete_task": "delete_task",
+        "update_task": "update_task",
+        "query_schedule": "check_calendar",
+        "query_calendar": "check_calendar",
+        "query_weather": "query_weather",
+        "arrange_trip": "create_task",
+    }
+    action = intent_to_action.get(intent)
+    if action:
+        sub_tasks.append({"action": action, "params": entities.copy()})
 
     if intent in ("create_task", "update_task", "arrange_trip"):
         sub_tasks.insert(0, {"action": "check_calendar", "params": entities})
