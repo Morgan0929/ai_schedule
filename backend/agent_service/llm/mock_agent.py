@@ -221,7 +221,7 @@ async def mock_chat(user_input: str) -> str:
         start = entities.get("start", "今天")
         end = entities.get("end", "7天后")
         return (
-            f"【当前安排】{start} ~ {end}\n暂无日程。\n\n需要安排什么？比如「明天下午3点开会」。"
+            f"【当前安排】{start} ~ {end}\n目前没有安排。"
         )
 
     if intent == "CREATE_TASK":
