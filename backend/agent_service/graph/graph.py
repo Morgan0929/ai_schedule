@@ -93,7 +93,7 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
             elif action == "query_weather":
                 external_data["weather"] = tool_result
 
-    return {
+    result = {
         "calendar_events": calendar_events,
         "external_data": external_data,
         "tasks_created": tasks_created,
@@ -102,6 +102,9 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
         "_tool_history": limiter.history,
         "error": None,
     }
+    import json
+    print("TOOLS RETURN STATE:", json.dumps(result, ensure_ascii=False, default=str)[:500])
+    return result
 
 
 async def conflict_check_node(state: AgentState) -> dict[str, Any]:

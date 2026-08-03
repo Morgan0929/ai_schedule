@@ -126,9 +126,10 @@ async def create_task_tool(user_id: int, title: str, start_time: str = None,
             database=s.POSTGRES_DB, timeout=5)
 
         # Check conflict
-        overlap = await conn.fetchval("SELECT count(*) FROM task WHERE user_id=$1 AND start_time < $2 AND end_time > $3",
+        existing = await conn.fetch("SELECT id,title,start_time,end_time FROM task WHERE user_id=$1 AND start_time < $2 AND end_time > $3",
             user_id, dto.end_time, dto.start_time)
-        if overlap:
+        print("EXISTING TASKS:", [(r["id"], r["title"]) for r in existing])
+        if existing:
             await conn.close()
             return {"error": "与已有任务时间重叠", "status": "conflict_or_error"}
 
