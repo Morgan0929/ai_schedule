@@ -61,11 +61,12 @@ D:/AIagent日程规划/
 │   │
 │   ├── app_service/         :8000     API 网关 & 用户认证
 │   ├── agent_service/       :8002     AI Agent 核心
-│   │   ├── graph/            LangGraph 节点 (planner/tools/conflict/reply)
+│   │   ├── graph/            LangGraph (planner/validator/tools/conflict/reply)
 │   │   ├── llm/              DeepSeek Client + ChatPromptTemplate
 │   │   ├── tools/            Document Analyzer
 │   │   ├── memory/           Memory System (3层)
 │   │   ├── middleware/       Tool Limit / Retry
+│   │   ├── mcp/              MCP Client + Weather/Search Servers
 │   │   ├── services/         AgentService
 │   │   └── utils/            Tracer (LangSmith) + Coordinator
 │   ├── timeline_service/    :8003     任务 CRUD + 冲突检测 + 课表
@@ -82,41 +83,53 @@ D:/AIagent日程规划/
 ### 3.2 Agent 工作流
 
 ```
-用户输入 → Memory Load (画像+摘要) → Token Check → [超阈值] Summary Node
+用户输入 → Memory Load (画像+摘要) → Token Check
     │
     ▼
-Planner Node      ChatPromptTemplate → Pydantic(PlannerOutput)
+Planner Node        ChatPromptTemplate → Pydantic(PlannerOutput)
+  │ (LLM优先, 失败→Event Detector→UNKNOWN, 不伪装)
+  │ 去关键词: 有未来时间+事件名→create_task
+  │ 置信度: source=llm/mock, confidence=0.0~1.0
     │
     ▼
-Tools Executor    Tool Call Limit + Tool Retry (with_retry)
+Validator Node      检查 intent/sub_tasks/title/time/confidence
+  │ 缺字段→从输入提取事件名补全
+  │ 低置信度(<0.6)→要求确认
+    │
+    ├─ 通过 ──────────────────────┐
+    │                             │
+    ▼                             ▼
+Tools Executor              Reply Node
+  Tool Call Limit(5)          (确认消息/
+  Tool Retry(指数退避)          拒绝回复)
     │
     ▼
-Conflict Check    if task_a overlaps task_b → conflicts_found
+Conflict Check
     │
     ▼
-Coordinator Node  ChatPromptTemplate → Pydantic(ConflictOutput) → A/B/C 方案
+Coordinator Node
     │
     ▼
-Reply Node        ChatPromptTemplate → stream_reply() → SSE 流式输出
+Reply Node           ChatPromptTemplate → SSE流式
     │
     ▼
-Memory Manager    Extract→Save (PG) + Working Memory clear (Redis)
+Memory Manager       Extract→Save(PG)
     │
     ▼
-LangSmith Trace   飞行记录仪 (异步后台, 失败不影响核心)
+LangSmith Trace      飞行记录仪
 ```
 
 ### 3.3 Agent 分层规则
 
 ```
-Node = 流程控制 (我该调用谁? 数据该往哪走?)
+Node = 流程控制 (Planner/Validator/Reply)
 Prompt = 思考 (ChatPromptTemplate, 每个 Node 独立)
-Tool = 执行 (操作数据库/API)
-Middleware = 拦截 (ToolCallLimit / Retry / Summarize)
+Tool = 执行 (asyncpg直连PG, 不经过SQLAlchemy)
+Middleware = 拦截 (ToolCallLimit/Retry/Summarize)
 
-换模型 (Qwen/GPT-4V): 只改 deepseek_client.py
-修改图片识别: 只改 tools/document_analyzer.py
-修改冲突逻辑: 只改 prompts.py 的 coordinator_prompt
+换模型: 只改 deepseek_client.py
+改工具: 只改 graph/tools.py
+改冲突: 只改 prompts.py
 ```
 
 ---
