@@ -165,23 +165,21 @@ async def delete_task_tool(user_id: int, task_id: int) -> dict:
 
 async def query_weather(user_id: int, city: str = "北京", target_date: str = None) -> dict:
     """
-    查询天气 — 优先缓存，无缓存则实时请求 wttr.in (免费 API)
+    查询天气 — MCP Weather Server (wttr.in 实时)
 
     Args:
-        city: 城市名（中文或拼音），默认北京
-        target_date: 日期 YYYY-MM-DD（1-3天预报）
+        city: 城市名，默认北京
     """
-    # 1. 先查缓存
-    from crawler_service.services.crawl_service import CrawlService
-    async with async_session_factory() as db:
-        service = CrawlService(db)
-        record = await service.get_latest("weather")
-        if record and record.raw_data:
-            data = record.raw_data.get("data", {})
-            if data.get("city") == city:
-                return {"city": city, "source": "cached", **record.raw_data}
+    # MCP Weather Server 直接调用 (不经过 LLM)
+    try:
+        from agent_service.mcp.client import call_mcp_tool
+        r = await call_mcp_tool("weather", "get_current_weather", {"city": city})
+        if r.get("success") and r.get("data"):
+            return {"city": city, "source": "mcp", **r["data"]}
+    except Exception:
+        pass
 
-    # 2. 实时请求 wttr.in
+    # Fallback: wttr.in
     try:
         import httpx
         url = f"https://wttr.in/{city}?format=j1"

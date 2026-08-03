@@ -48,6 +48,8 @@ planner_prompt = ChatPromptTemplate.from_messages([
 - update_task: 更新任务 (params: task_id, ...)
 - delete_task: 删除任务 (params: task_id)
 - query_weather: 查询天气 (params: city)
+- mcp_weather_current: 实时天气 (params: city)
+- mcp_weather_forecast: 天气预报 (params: city, days)
 - get_travel_time: 出行时间 (params: origin, destination, mode)
 - analyze_document: 分析图片 (params: image_base64, doc_type, hint)
 - search_knowledge: 知识库搜索 (params: query)
