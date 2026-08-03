@@ -39,7 +39,7 @@ def detect_intent(user_input: str) -> dict[str, Any]:
     if any(w in text for w in ["安排", "创建", "添加", "新建", "加上", "帮我", "请帮我", "我要", "我想"]):
         # 区分：纯查询 vs 创建
         if any(w in text for w in ["查看", "查询", "看看", "有没有", "有什么", "检查"]):
-            return {"intent": "QUERY_CALENDAR", "entities": _extract_time(text), "confidence": 0.8}
+            return {"intent": "QUERY_SCHEDULE", "entities": _extract_time(text), "confidence": 0.8}
         return {"intent": "CREATE_EVENT", "entities": _extract_task_info(text), "confidence": 0.85}
 
     # 出差/航班（在普通查询之前检查）
@@ -60,7 +60,7 @@ def detect_intent(user_input: str) -> dict[str, Any]:
 
     # 普通查询（查看/查询 + 日期）
     if any(w in text for w in ["查看", "查询", "看看", "有什么", "日程", "今天", "明天", "下周", "这周"]):
-        return {"intent": "QUERY_CALENDAR", "entities": _extract_time(text), "confidence": 0.8}
+        return {"intent": "QUERY_SCHEDULE", "entities": _extract_time(text), "confidence": 0.8}
 
     # 默认对话
     return {"intent": "CHAT", "entities": {}, "confidence": 0.3}
@@ -217,7 +217,7 @@ async def mock_chat(user_input: str) -> str:
     intent = intent_info["intent"]
     entities = intent_info["entities"]
 
-    if intent == "QUERY_CALENDAR":
+    if intent == "QUERY_SCHEDULE":
         start = entities.get("start", "今天")
         end = entities.get("end", "7天后")
         return (

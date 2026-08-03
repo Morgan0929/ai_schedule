@@ -30,12 +30,16 @@ class Intent(str, Enum):
 
 
 def normalize_intent(raw: str) -> Intent:
-    """统一意图名: QUERY_CALENDAR→query_schedule, CREATE_TASK→create_event"""
+    """统一意图名: query_calendar→query_schedule, create_task→create_event 等"""
     mapping = {
+        # 旧名 → 新名
         "query_calendar": Intent.QUERY_SCHEDULE,
+        "query_event": Intent.QUERY_SCHEDULE,
         "create_task": Intent.CREATE_EVENT,
         "delete_task": Intent.DELETE_EVENT,
         "update_task": Intent.UPDATE_EVENT,
+        "conflict_negotiation": Intent.DETECT_CONFLICT,
+        "casual_chat": Intent.CHAT,
     }
     lower = raw.lower().strip()
     if lower in mapping:

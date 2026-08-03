@@ -26,7 +26,7 @@ planner_prompt = ChatPromptTemplate.from_messages([
 - CREATE_EVENT: 日程 (有时间段: 会议/课程/出行)
 - CREATE_TODO: 待办 (无固定时间: 提交作业/完成任务)
 - CREATE_REMINDER: 提醒 (到期提醒/周期)
-- QUERY_CALENDAR: 查询安排
+- QUERY_SCHEDULE: 查询安排 (疑问句/问时间/问有什么事)
 - UPDATE_EVENT: 修改日程
 - DELETE_EVENT: 删除日程
 - ARRANGE_TRIP: 出差
