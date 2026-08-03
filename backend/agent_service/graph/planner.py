@@ -21,15 +21,7 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
     if is_llm_available():
         result = await _llm_plan(user_input)
         if result and result.intent != "unknown":
-            import json
-            state_update = _planner_output_to_state(result)
-            print("[DIAG-1a] PlannerOutput → state_update:", json.dumps({
-                "intent": state_update.get("intent"),
-                "sub_tasks": state_update.get("sub_tasks"),
-                "confidence": state_update.get("_confidence"),
-                "source": state_update.get("_source"),
-            }, ensure_ascii=False, default=str))
-            return state_update
+            return _planner_output_to_state(result)
 
     # Event 检测 (mock, 不靠关键词)
     event_result = _detect_event_statement(user_input)
@@ -61,15 +53,9 @@ async def _llm_plan(user_input: str) -> PlannerOutput | None:
             result.source = "llm"
             if not result.confidence:
                 result.confidence = 0.85
-            # === DIAG: 1. Planner 原始输出 ===
-            import json
-            print("[DIAG-1] Planner LLM raw:", json.dumps({
-                "intent": result.intent, "tool": result.tool,
-                "entities": result.entities, "confidence": result.confidence,
-            }, ensure_ascii=False))
             return result
-    except Exception as e:
-        print("[DIAG-1] Planner LLM FAILED:", e)
+    except Exception:
+        pass
     return None
 
 

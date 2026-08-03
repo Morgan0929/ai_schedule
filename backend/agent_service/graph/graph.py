@@ -65,9 +65,6 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
         result = await _call_with_retry()
         limiter.record(action)
 
-        import json as _j
-        print(f"[DIAG-4] Tool {action}: success={result.get('success')} result={_j.dumps(result.get('result',{}), ensure_ascii=False, default=str)[:300]}")
-
         if result.get("success"):
             tool_result = result.get("result", {})
 
@@ -236,23 +233,13 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
 def _needs_confirmation(state: AgentState) -> Literal["reply", "tools_executor"]:
     """Validator → Reply (需确认) 或 Tools Executor (通过)"""
     if state.get("_needs_confirmation"):
-        print("[DIAG-2] Validator: NEEDS CONFIRMATION → reply")
         return "reply"
-    # === DIAG: 2. Validator 通过后的 state ===
-    import json
-    print("[DIAG-2] Validator PASSED, sub_tasks:", json.dumps(
-        state.get("sub_tasks", []), ensure_ascii=False, default=str)[:500])
     return "tools_executor"
 
 
 def should_use_tools(state: AgentState) -> Literal["tools_executor", "reply"]:
     """判断是否需要执行工具"""
     sub_tasks = state.get("sub_tasks", [])
-    # === DIAG: 3. Router 输入 ===
-    import json
-    print("[DIAG-3] Router input:", json.dumps({
-        "intent": state.get("intent"), "sub_tasks": sub_tasks,
-    }, ensure_ascii=False, default=str)[:300])
     if sub_tasks:
         return "tools_executor"
     return "reply"
