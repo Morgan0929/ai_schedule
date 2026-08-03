@@ -43,10 +43,18 @@ class AgentState(TypedDict, total=False):
     _structured_info: str
     _intent: str
 
+    # Validator
+    needs_confirmation: bool
+    _confirm_message: str
+    _issues: list[str]
+    _confidence: float
+    _source: str
+    _validated: bool
+
     # Middleware
-    tool_calls_count: int            # Tool Call Limit
-    _tool_history: list[str]         # 工具调用历史
-    _compressed_messages: bool       # 是否已压缩消息
+    tool_calls_count: int
+    _tool_history: list[str]
+    _compressed_messages: bool
 
     # 错误
     error: str | None

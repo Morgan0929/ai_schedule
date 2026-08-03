@@ -36,12 +36,12 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
         return {
             "intent": "unknown",
             "sub_tasks": [],
-            "_needs_confirmation": True,
+            "needs_confirmation": True,
             "_confirm_message": "你是想安排一项日程，还是查询已有安排？",
         }
 
     # 完全无法识别
-    return {"intent": "chat", "sub_tasks": [], "_needs_confirmation": False}
+    return {"intent": "chat", "sub_tasks": [], "needs_confirmation": False}
 
 
 async def _llm_plan(user_input: str) -> PlannerOutput | None:
@@ -163,5 +163,5 @@ def _planner_output_to_state(result: PlannerOutput) -> dict[str, Any]:
         "sub_tasks": sub_tasks,
         "_confidence": result.confidence,
         "_source": result.source,
-        "_needs_confirmation": result.need_confirmation or result.confidence < CONFIDENCE_THRESHOLD,
+        "needs_confirmation": result.need_confirmation or result.confidence < CONFIDENCE_THRESHOLD,
     }

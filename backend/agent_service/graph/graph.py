@@ -28,6 +28,13 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
     """
     工具执行节点 — 含 Middleware: Tool Call Limit + Tool Retry
     """
+    import json
+    print("==============================")
+    print("ENTER TOOLS EXECUTOR")
+    print(json.dumps({k: state.get(k) for k in
+        ["intent", "sub_tasks", "tasks_created", "needs_confirmation", "actions_taken"]},
+        ensure_ascii=False, default=str)[:500])
+    print("==============================")
     from agent_service.middleware.limits import ToolCallLimiter, MAX_TOOL_CALLS
     from agent_service.middleware.retry import with_retry
 
@@ -134,7 +141,7 @@ async def conflict_check_node(state: AgentState) -> dict[str, Any]:
 async def reply_node(state: AgentState) -> dict[str, Any]:
     """回复生成节点"""
     # Confidence Gate: 需要确认时直接返回
-    if state.get("_needs_confirmation"):
+    if state.get("needs_confirmation"):
         msg = state.get("_confirm_message", "你是想安排一项日程，还是查询已有安排？")
         return {"final_reply": msg}
 
@@ -230,10 +237,10 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
 
 # ============ 路由函数 ============
 
-def _needs_confirmation(state: AgentState) -> Literal["reply", "tools_executor"]:
+def needs_confirmation(state: AgentState) -> Literal["reply", "tools_executor"]:
     """Validator → Reply (需确认) 或 Tools Executor (通过)"""
-    route = "reply" if state.get("_needs_confirmation") else "tools_executor"
-    print("ROUTER:", route, "_needs_confirmation=", state.get("_needs_confirmation"))
+    route = "reply" if state.get("needs_confirmation") else "tools_executor"
+    print("ROUTER:", route, "needs_confirmation=", state.get("needs_confirmation"))
     return route
 
 
@@ -288,7 +295,7 @@ def build_agent_graph() -> StateGraph:
     # Validator → Tools (确认通过) 或 Reply (需要确认/有问题)
     workflow.add_conditional_edges(
         "validator",
-        _needs_confirmation,
+        needs_confirmation,
         {"reply": "reply", "tools_executor": "tools_executor"},
     )
 
