@@ -65,8 +65,8 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
         result = await _call_with_retry()
         limiter.record(action)
 
-        if not result.get("success"):
-            print(f"[DIAG-4] Tool FAILED: {action} → {result.get('error', 'unknown')[:200]}")
+        import json as _j
+        print(f"[DIAG-4] Tool {action}: success={result.get('success')} result={_j.dumps(result.get('result',{}), ensure_ascii=False, default=str)[:300]}")
 
         if result.get("success"):
             tool_result = result.get("result", {})
