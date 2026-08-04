@@ -70,6 +70,7 @@ async def query_calendar(user_id: int, start_time: str = None, end_time: str = N
     try:
         import asyncpg
         from common.config import Settings; s_cfg = Settings()
+        print(f"QUERY CALENDAR: start={start_dt} end={end_dt}")
         conn = await asyncpg.connect(
             host=s_cfg.POSTGRES_HOST, port=s_cfg.POSTGRES_PORT,
             user=s_cfg.POSTGRES_USER, password=s_cfg.POSTGRES_PASSWORD,
@@ -78,6 +79,7 @@ async def query_calendar(user_id: int, start_time: str = None, end_time: str = N
             "SELECT id,title,start_time,end_time,priority,location,category "
             "FROM task WHERE user_id=$1 AND start_time < $2 AND end_time > $3 "
             "ORDER BY start_time", user_id, end_dt, start_dt)
+        print(f"DB RESULT: {len(rows)} rows — {[(r['title'], str(r['start_time'])[:16]) for r in rows]}")
         await conn.close()
         return [{"id": r["id"], "title": r["title"],
                  "start_time": r["start_time"].isoformat(),
