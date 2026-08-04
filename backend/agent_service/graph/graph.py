@@ -198,6 +198,17 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
     if tasks_created and actions:
         return {"final_reply": "\n".join(actions)}
 
+    # 查询结果: 直接展示, 不用LLM
+    if intent in ("query_schedule", "query_calendar") and calendar_events:
+        lines = ["日程安排:"]
+        for ev in calendar_events[:10]:
+            st = ev.get("start_time", "")[:16]
+            lines.append(f"  {st} {ev.get('title','?')}")
+        return {"final_reply": "\n".join(lines)}
+
+    if intent in ("query_schedule", "query_calendar") and not calendar_events:
+        return {"final_reply": "目前没有安排。"}
+
     # 构建结构化摘要
     summary_parts = []
     if actions:
