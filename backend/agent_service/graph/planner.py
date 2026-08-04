@@ -22,10 +22,14 @@ def _normalize_return(r: dict) -> dict:
     r["intent"] = normalized.value if hasattr(normalized, 'value') else str(normalized)
     r.setdefault("sub_tasks", [])
     r.setdefault("needs_confirmation", False)
+    # 统一 source 到 _source
+    if "source" in r and "_source" not in r:
+        r["_source"] = r.pop("source")
+    r.setdefault("_source", "llm" if is_llm_available() else "fallback")
     if r["intent"] in ("unknown", "UNKNOWN"):
         r["intent"] = "chat"
     import json
-    print(f"FINAL PLANNER RETURN [intent={r['intent']}]",
+    print(f"FINAL PLANNER RETURN [intent={r['intent']}] [source={r.get('_source','?')}]",
           json.dumps(r, ensure_ascii=False, default=str)[:500])
     return r
 
