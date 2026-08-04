@@ -184,9 +184,9 @@ def _planner_output_to_state(result: PlannerOutput) -> dict[str, Any]:
         sub_tasks.append({"action": "query_weather", "params": entities})
 
     return {
-        "intent": intent,
+        "intent": intent_str,
         "sub_tasks": sub_tasks,
-        "_confidence": result.confidence,
+        "_confidence": float(result.confidence),
         "_source": result.source,
         "needs_confirmation": result.need_confirmation or result.confidence < CONFIDENCE_THRESHOLD,
     }
