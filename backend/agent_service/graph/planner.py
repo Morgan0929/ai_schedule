@@ -74,6 +74,7 @@ async def _llm_plan(user_input: str) -> PlannerOutput | None:
             result.source = "llm"
             if not result.confidence:
                 result.confidence = 0.85
+            result.intent = normalize_intent(result.intent.value if hasattr(result.intent, 'value') else str(result.intent))
             print("RAW PLANNER OUTPUT=", result.model_dump_json(indent=2))
             return result
     except Exception as e:
