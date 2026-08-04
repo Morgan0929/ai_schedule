@@ -15,6 +15,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from agent_service.graph.state import AgentState
 from agent_service.graph.planner import planner_node
+from agent_service.graph.state_inspector import state_inspector_node
 from agent_service.graph.entity_normalizer import entity_normalizer_node
 from agent_service.graph.validator import validator_node
 from agent_service.graph.tools import execute_tool
@@ -324,6 +325,7 @@ def build_agent_graph() -> StateGraph:
 
     # 添加节点
     workflow.add_node("planner", planner_node)
+    workflow.add_node("state_inspector", state_inspector_node)
     workflow.add_node("entity_normalizer", entity_normalizer_node)
     workflow.add_node("validator", validator_node)
     workflow.add_node("tools_executor", tools_executor_node)
@@ -334,8 +336,9 @@ def build_agent_graph() -> StateGraph:
     # 设置入口
     workflow.set_entry_point("planner")
 
-    # Planner → Normalizer → Validator
-    workflow.add_edge("planner", "entity_normalizer")
+    # Planner → Inspector → Normalizer → Validator
+    workflow.add_edge("planner", "state_inspector")
+    workflow.add_edge("state_inspector", "entity_normalizer")
     workflow.add_edge("entity_normalizer", "validator")
 
     # Validator → Tools (确认通过) 或 Reply (需要确认/有问题)

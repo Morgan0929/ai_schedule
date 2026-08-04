@@ -14,48 +14,58 @@ from agent_service.llm.prompts import planner_prompt
 CONFIDENCE_THRESHOLD = 0.8  # 低于此值需要用户确认
 
 
-async def planner_node(state: AgentState) -> dict[str, Any]:
+def _normalize_return(r: dict) -> dict:
+    """P2: PlannerOutputNormalizer — 所有返回路径统一经过这里"""
+    r["intent"] = str(r.get("intent", "chat"))
+    r.setdefault("sub_tasks", [])
+    r.setdefault("needs_confirmation", False)
+    if r.get("intent") in ("unknown", "UNKNOWN"):
+        r["intent"] = "chat"
     import json
+    print(f"FINAL PLANNER RETURN [type={type(r['intent']).__name__}]",
+          json.dumps(r, ensure_ascii=False, default=str)[:500])
+    return r
+
+
+async def planner_node(state: AgentState) -> dict[str, Any]:
     user_input = state["user_input"]
 
-    # Context Resolver: 用户选择了 A/B/C → 解析冲突上下文
+    # ① Context Resolver
     pending = state.get("pending_action", {})
     if pending.get("type") == "conflict_resolution":
         options = pending.get("options", {})
         choice = user_input.strip().upper()
         if choice in options:
             opt = options[choice]
-            r = {"intent": "update_event", "sub_tasks": [
-                    {"action": "update_task", "params": {"target": opt["task"], "hint": user_input}},
-                ], "needs_confirmation": False, "pending_action": {}}
-            print("FINAL PLANNER RETURN =====", json.dumps(r, ensure_ascii=False, default=str)[:500])
-            return r
+            return _normalize_return({
+                "intent": "update_event",
+                "sub_tasks": [{"action": "update_task", "params": {
+                    "target": opt["task"], "hint": user_input}}],
+                "needs_confirmation": False,
+                "pending_action": {},
+            })
 
-    # LLM 优先
+    # ② LLM
     if is_llm_available():
         result = await _llm_plan(user_input)
-        if result and result.intent != "unknown":
-            r = _planner_output_to_state(result)
-            print("FINAL PLANNER RETURN =====", json.dumps(r, ensure_ascii=False, default=str)[:500])
-            return r
+        if result and str(result.intent) not in ("unknown", "chat"):
+            return _normalize_return(_planner_output_to_state(result))
 
-    # Event 检测
+    # ③ Event Detector
     event_result = _detect_event_statement(user_input)
     if event_result["confidence"] >= CONFIDENCE_THRESHOLD:
-        print("FINAL PLANNER RETURN =====", json.dumps(event_result, ensure_ascii=False, default=str)[:500])
-        return event_result
+        return _normalize_return(event_result)
 
-    # 低置信度
+    # ④ Low confidence
     if event_result["confidence"] > 0:
-        r = {"intent": "unknown", "sub_tasks": [], "needs_confirmation": True,
-             "_confirm_message": "你是想安排一项日程，还是查询已有安排？"}
-        print("FINAL PLANNER RETURN =====", json.dumps(r, ensure_ascii=False, default=str)[:500])
-        return r
+        return _normalize_return({
+            "intent": "unknown",
+            "sub_tasks": [],
+            "needs_confirmation": True,
+        })
 
-    # 完全无法识别
-    r = {"intent": "chat", "sub_tasks": [], "needs_confirmation": False}
-    print("FINAL PLANNER RETURN =====", json.dumps(r, ensure_ascii=False, default=str)[:500])
-    return r
+    # ⑤ Fallback
+    return _normalize_return({"intent": "chat", "sub_tasks": []})
 
 
 async def _llm_plan(user_input: str) -> PlannerOutput | None:
