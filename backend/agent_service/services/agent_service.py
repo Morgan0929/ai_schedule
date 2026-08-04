@@ -107,6 +107,7 @@ class AgentService:
     async def chat(request: AgentChatRequest) -> AgentChatResponse:
         """非流式对话 — LangGraph 工作流 + Memory + Trace"""
         session_id = request.session_id or str(uuid.uuid4())[:8]
+        print(f"SESSION ID: {session_id} (from_request={'YES' if request.session_id else 'NEW'})")
         tracer = start_trace(session_id=session_id,
                              user_id=request.user_id or 0,
                              user_input=request.message)
@@ -125,7 +126,6 @@ class AgentService:
         }
 
         try:
-            # Memory: Load + Summary Check + Prune
             from agent_service.memory.profile import ProfileManager
             from agent_service.memory.working import WorkingMemory
             from agent_service.memory.summarizer import SummaryNode, should_summarize
@@ -143,13 +143,20 @@ class AgentService:
                 from langchain_core.messages import SystemMessage
                 initial_state["messages"].append(SystemMessage(content=recent_summary))
 
+            # Load pending_action — add debug
+            import json as _json
             working = await WorkingMemory.get(session_id)
-            print("LOAD PENDING ACTION:", working.get("pending_action") if working else None)
+            print(f"REDIS LOAD KEY: working:mem:{session_id}")
+            print(f"REDIS RAW VALUE: {_json.dumps(working, ensure_ascii=False)[:300] if working else 'None'}")
             if working:
                 if working.get("intent"):
                     initial_state["intent"] = working.get("intent", "")
                 if working.get("pending_action"):
                     initial_state["pending_action"] = working["pending_action"]
+                else:
+                    print("WARNING: working memory found but pending_action NOT in it")
+            else:
+                print("WARNING: no working memory for this session (new session?)")
 
             if should_summarize(initial_state["messages"]):
                 logger.info("Token threshold exceeded, running Summary Node...")
@@ -166,7 +173,9 @@ class AgentService:
             await WorkingMemory.save(session_id, "actions", final_state.get("actions_taken", []))
             if final_state.get("pending_action"):
                 await WorkingMemory.save(session_id, "pending_action", final_state["pending_action"])
-                print("SAVE STATE: pending_action=", final_state["pending_action"])
+                print(f"REDIS SAVE KEY: working:mem:{session_id}")
+                import json as _json2
+                print("SAVE STATE: pending_action=", _json2.dumps(final_state["pending_action"], ensure_ascii=False)[:300])
 
             # Trace
             tracer.add_step("planner",
