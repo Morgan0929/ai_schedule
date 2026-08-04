@@ -283,10 +283,11 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
 # ============ 路由函数 ============
 
 def check_pending_action(state: AgentState) -> Literal["conflict_resolver", "planner"]:
-    """入口路由: 有pending_action → conflict_resolver, 否则 → planner"""
+    """入口路由"""
     pending = state.get("pending_action", {})
-    if pending and pending.get("type") == "conflict_resolution":
-        print("ROUTE: pending_action found → conflict_resolver")
+    print("CURRENT PENDING ACTION:", pending)
+    if pending and pending.get("type") == "conflict_resolution" and pending.get("options"):
+        print("ROUTE: → conflict_resolver")
         return "conflict_resolver"
     return "planner"
 

@@ -38,6 +38,21 @@ async def coordinator_node(state: AgentState) -> dict[str, Any]:
                     "conflict_with": c.get("task_a", ""),
                     "time": c.get("task_b_time", ""),
                 }
+            # 确保至少A/B/C三个选项
+            defaults = [
+                ("A", "move_new", "将新任务延后"),
+                ("B", "move_old", "将已有任务提前"),
+                ("C", "cancel_new", "取消新任务"),
+            ]
+            for plan_id, action, desc in defaults:
+                if plan_id not in options:
+                    c = conflicts[0] if conflicts else {}
+                    options[plan_id] = {
+                        "action": action,
+                        "task": c.get("task_b", ""),
+                        "conflict_with": c.get("task_a", ""),
+                        "description": desc,
+                    }
             r = {
                 "conflicts_found": conflicts,
                 "conflict_count": len(conflicts),
