@@ -87,8 +87,11 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
                 if isinstance(tool_result, dict) and tool_result.get("id"):
                     tasks_created.append(tool_result["id"])
                     actions_taken.append(f"创建任务「{tool_result.get('title', '')}」")
+                elif isinstance(tool_result, dict) and tool_result.get("conflict_level") == "SOFT":
+                    # SOFT冲突: 允许创建, 但加警告
+                    tasks_created.append(tool_result.get("id", 0))
+                    actions_taken.append(f"[提醒] {tool_result.get('error','')}，仍已创建「{tool_result.get('title','')}」")
                 elif isinstance(tool_result, dict) and tool_result.get("conflicts"):
-                    # 冲突信息不丢 — 传给 coordinator
                     conflicts_found.extend(tool_result["conflicts"])
             elif action in ("update_task", "update_task_tool"):
                 actions_taken.append(f"更新任务 #{params.get('task_id', '')}")

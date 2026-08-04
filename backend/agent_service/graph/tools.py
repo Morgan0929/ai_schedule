@@ -134,18 +134,39 @@ async def create_task_tool(user_id: int, title: str, start_time: str = None,
             user=s.POSTGRES_USER, password=s.POSTGRES_PASSWORD,
             database=s.POSTGRES_DB, timeout=5)
 
-        # Check conflict
-        existing = await conn.fetch("SELECT id,title,start_time,end_time FROM task WHERE user_id=$1 AND start_time < $2 AND end_time > $3",
+        # Check conflict: HARD(重叠) / SOFT(±30min) / NONE
+        hard = await conn.fetch(
+            "SELECT id,title,start_time,end_time FROM task WHERE user_id=$1 AND start_time < $2 AND end_time > $3",
             user_id, dto.end_time, dto.start_time)
-        if existing:
+        soft = await conn.fetch(
+            "SELECT id,title,start_time,end_time FROM task WHERE user_id=$1 AND start_time BETWEEN $2 AND $3 OR end_time BETWEEN $2 AND $3",
+            user_id,
+            dto.start_time - timedelta(minutes=30),
+            dto.end_time + timedelta(minutes=30))
+
+        if hard:
             conflicts = [{"task_a": r["title"], "task_b": dto.title,
-                          "task_a_time": f'{r["start_time"]}~{r["end_time"]}',
-                          "task_b_time": f'{dto.start_time}~{dto.end_time}',
-                          "severity": "WARNING"}
-                         for r in existing]
+                          "task_a_time": str(r["start_time"])[:16],
+                          "task_b_time": str(dto.start_time)[:16],
+                          "level": "HARD"} for r in hard]
             await conn.close()
-            return {"error": "与已有任务时间重叠", "status": "conflict_or_error",
-                    "conflicts": conflicts}
+            return {"error": "与已有任务时间重叠", "status": "conflict",
+                    "conflict_level": "HARD", "conflicts": conflicts}
+
+        if soft:
+            near = [{"task_a": r["title"], "task_b": dto.title,
+                     "task_a_time": str(r["start_time"])[:16],
+                     "level": "SOFT"} for r in soft
+                    if r not in hard]
+            # SOFT conflict → 仍然创建, 附加警告
+            tid = await conn.fetchval(
+                "INSERT INTO task (user_id,title,start_time,end_time,priority,status,location,category,tags,task_metadata) "
+                "VALUES ($1,$2,$3,$4,$5,'PENDING',$6,$7,'[]','{}') RETURNING id",
+                user_id, dto.title, dto.start_time, dto.end_time, priority, location, category)
+            await conn.close()
+            return {"id": tid, "title": dto.title, "status": "created",
+                    "conflict_level": "SOFT", "conflicts": near,
+                    "error": "与已有任务时间相近"}
 
         tid = await conn.fetchval(
             "INSERT INTO task (user_id,title,start_time,end_time,priority,status,location,category,tags,task_metadata) "
