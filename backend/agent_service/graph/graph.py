@@ -351,8 +351,8 @@ def build_agent_graph() -> StateGraph:
         {"conflict_resolver": "conflict_resolver", "planner": "planner"},
     )
 
-    # conflict_resolver → inspector → normalizer → validator
-    workflow.add_edge("conflict_resolver", "state_inspector")
+    # conflict_resolver → 直接 tools_executor (跳过 planner/validator)
+    workflow.add_edge("conflict_resolver", "tools_executor")
 
     # Planner → Inspector → Normalizer → Validator
     workflow.add_edge("planner", "state_inspector")

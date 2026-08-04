@@ -1,13 +1,15 @@
 """
-Conflict Resolver Node — 处理用户对冲突方案的选择 (A/B/C)
+Conflict Resolver — 用户选择 A/B/C, 直接执行
 
-流程: check_pending_action → 有pending → conflict_resolver
+不经过 planner/validator/normalizer
+输入: user_input + pending_action
+输出: executor action
 """
 from typing import Any
 
 
 async def conflict_resolver_node(state: dict) -> dict[str, Any]:
-    """解析用户选择, 执行对应操作"""
+    """解析用户选择, 直接返回执行动作"""
     pending = state.get("pending_action", {})
     user_input = state.get("user_input", "").strip().upper()
     options = pending.get("options", {})
@@ -15,37 +17,55 @@ async def conflict_resolver_node(state: dict) -> dict[str, Any]:
     if user_input not in options:
         return {
             "needs_confirmation": True,
-            "_confirm_message": f"请选择方案: {', '.join(options.keys())}",
+            "_confirm_message": f"请选择方案: {', '.join(sorted(options.keys()))}",
             "_issues": ["invalid_choice"],
         }
 
     opt = options[user_input]
-    action = opt.get("action", "move_new")
-    task = opt.get("task", "")
+    action = opt.get("action", "")
+    new_task = opt.get("new_task", "")
+    existing_task = opt.get("existing_task", "")
 
-    if action == "move_new":
+    if action == "keep_existing":
         return {
-            "intent": "create_event",
+            "intent": "update_event",
             "sub_tasks": [
-                {"action": "create_task", "params": {
-                    "title": task,
-                    "start_time": state.get("_choice_time", ""),  # TODO: parse from user input
-                }},
+                {"action": "delete_task", "params": {"title": new_task}},
             ],
             "needs_confirmation": False,
             "pending_action": {},  # 清除
+            "_confirm_message": f"删除「{new_task}」, 保留「{existing_task}」。",
+            "_skip_validator": True,
         }
-    elif action == "keep_existing":
+    elif action == "keep_new":
         return {
-            "intent": "chat",
-            "sub_tasks": [],
+            "intent": "update_event",
+            "sub_tasks": [
+                {"action": "create_task", "params": {
+                    "title": new_task,
+                    "hint": f"用户选择保留{new_task}, 需要调整{existing_task}"
+                }},
+            ],
             "needs_confirmation": False,
             "pending_action": {},
-            "_confirm_message": f"保留「{opt.get('conflict_with','')}」, 不创建「{task}」。",
+            "_confirm_message": f"保留「{new_task}」, 需要调整「{existing_task}」。",
+            "_skip_validator": True,
+        }
+    elif action == "cancel_new":
+        return {
+            "intent": "delete_event",
+            "sub_tasks": [
+                {"action": "delete_task", "params": {"title": new_task}},
+            ],
+            "needs_confirmation": False,
+            "pending_action": {},
+            "_confirm_message": f"已取消「{new_task}」。",
+            "_skip_validator": True,
         }
 
     return {
         "needs_confirmation": True,
-        "_confirm_message": f"方案{user_input}暂不支持自动执行。",
+        "_confirm_message": "此方案暂不支持自动执行。",
         "_issues": ["unsupported_action"],
+        "pending_action": {},
     }

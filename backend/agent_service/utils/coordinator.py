@@ -33,15 +33,16 @@ async def coordinator_node(state: AgentState) -> dict[str, Any]:
             for i, c in enumerate(conflicts[:3]):
                 plan_id = chr(ord("A") + i)
                 options[plan_id] = {
-                    "action": "move_new",
-                    "task": c.get("task_b", ""),
-                    "conflict_with": c.get("task_a", ""),
-                    "time": c.get("task_b_time", ""),
+                    "action": "keep_existing" if i == 0 else ("keep_new" if i == 1 else "cancel_new"),
+                    "existing_task": c.get("task_a", ""),
+                    "new_task": c.get("task_b", ""),
+                    "existing_time": c.get("task_a_time", ""),
+                    "new_time": c.get("task_b_time", ""),
                 }
             # 确保至少A/B/C三个选项
             defaults = [
-                ("A", "move_new", "将新任务延后"),
-                ("B", "move_old", "将已有任务提前"),
+                ("A", "keep_existing", "保留已有, 新任务延后"),
+                ("B", "keep_new", "保留新任务, 已有任务调整"),
                 ("C", "cancel_new", "取消新任务"),
             ]
             for plan_id, action, desc in defaults:
@@ -49,8 +50,10 @@ async def coordinator_node(state: AgentState) -> dict[str, Any]:
                     c = conflicts[0] if conflicts else {}
                     options[plan_id] = {
                         "action": action,
-                        "task": c.get("task_b", ""),
-                        "conflict_with": c.get("task_a", ""),
+                        "existing_task": c.get("task_a", ""),   # 已有
+                        "new_task": c.get("task_b", ""),        # 新增
+                        "existing_time": c.get("task_a_time", ""),
+                        "new_time": c.get("task_b_time", ""),
                         "description": desc,
                     }
             r = {
@@ -66,20 +69,15 @@ async def coordinator_node(state: AgentState) -> dict[str, Any]:
             print("COORDINATOR OUTPUT:", r)
             return r
 
-    # Mock: 始终 A/B/C 三个选项
-    mock_options = {}
     c0 = conflicts[0] if conflicts else {}
-    defaults = [
-        ("A", "move_new", "将新任务延后"),
-        ("B", "move_old", "将已有任务提前"),
-        ("C", "cancel_new", "取消新任务"),
-    ]
-    for plan_id, action, desc in defaults:
-        mock_options[plan_id] = {
-            "action": action, "description": desc,
-            "task": c0.get("task_b", ""),
-            "conflict_with": c0.get("task_a", ""),
-        }
+    mock_options = {
+        "A": {"action": "keep_existing", "existing_task": c0.get("task_a",""), "new_task": c0.get("task_b",""),
+              "description": "保留已有, 新任务延后"},
+        "B": {"action": "keep_new", "existing_task": c0.get("task_a",""), "new_task": c0.get("task_b",""),
+              "description": "保留新任务, 已有任务调整"},
+        "C": {"action": "cancel_new", "new_task": c0.get("task_b",""),
+              "description": "取消新任务"},
+    }
     r = {
         "conflicts_found": conflicts,
         "conflict_count": len(conflicts),
