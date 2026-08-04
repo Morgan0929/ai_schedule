@@ -26,12 +26,16 @@ async def validator_node(state: dict) -> dict[str, Any]:
     sub_tasks = state.get("sub_tasks", [])
     user_input = state.get("user_input", "")
 
-    # 1. intent 必须存在
-    if not intent or intent in ("unknown", "chat"):
+    # 1. intent 类型守卫 + 白名单
+    ALLOWED_INTENTS = {"create_event", "create_todo", "create_reminder",
+                       "query_schedule", "query_weather",
+                       "update_event", "delete_event", "arrange_trip",
+                       "chat", "unknown"}
+    if not isinstance(intent, str) or intent not in ALLOWED_INTENTS:
         r = {
             "needs_confirmation": True,
             "_confirm_message": "请问你是想安排日程、查询安排，还是其他事务？",
-            "_issues": ["intent_not_determined"],
+            "_issues": ["intent_invalid", f"got={intent!r} type={type(intent).__name__}"],
         }; _vlog("AFTER VALIDATOR", r); return r
 
     # 2. sub_tasks 不空
