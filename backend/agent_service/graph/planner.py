@@ -22,6 +22,15 @@ def normalize_planner_result(
     if intent_str in ("unknown", "UNKNOWN"):
         intent_str = "chat"
 
+    # normalize calendar params: date→start_time/end_time
+    tasks = list(sub_tasks or [])
+    for t in tasks:
+        p = t.get("params", {}) if isinstance(t.get("params"), dict) else {}
+        if "date" in p and "start_time" not in p:
+            d = p.pop("date")
+            p["start_time"] = f"{d}T00:00:00" if "T" not in str(d) else str(d)
+            p["end_time"] = f"{d}T23:59:59" if "T" not in str(d) else str(d)
+
     result = {
         "intent": intent_str,
         "sub_tasks": sub_tasks or [],
