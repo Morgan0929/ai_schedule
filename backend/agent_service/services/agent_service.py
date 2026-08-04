@@ -149,6 +149,7 @@ class AgentService:
                     initial_state["intent"] = working.get("intent", "")
                 if working.get("pending_action"):
                     initial_state["pending_action"] = working["pending_action"]
+                    print("RESTORE STATE: pending_action=", working["pending_action"])
 
             if should_summarize(initial_state["messages"]):
                 logger.info("Token threshold exceeded, running Summary Node...")
@@ -165,6 +166,7 @@ class AgentService:
             await WorkingMemory.save(session_id, "actions", final_state.get("actions_taken", []))
             if final_state.get("pending_action"):
                 await WorkingMemory.save(session_id, "pending_action", final_state["pending_action"])
+                print("SAVE STATE: pending_action=", final_state["pending_action"])
 
             # Trace
             tracer.add_step("planner",
