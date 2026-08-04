@@ -194,6 +194,10 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
             parts.append(f"  [{s.get('plan_id','?')}] {tag} {s.get('title','')}")
         return {"final_reply": "\n".join(parts)}
 
+    # 确定性回复: 有创建/删除时直接用模板, 不让LLM编
+    if tasks_created and actions:
+        return {"final_reply": "\n".join(actions)}
+
     # 构建结构化摘要
     summary_parts = []
     if actions:

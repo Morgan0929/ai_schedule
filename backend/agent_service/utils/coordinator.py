@@ -63,6 +63,7 @@ async def coordinator_node(state: AgentState) -> dict[str, Any]:
                 "recommended_plan": "",  # 等用户选择
                 "pending_action": {
                     "type": "conflict_resolution",
+                    "stage": "waiting_choice",
                     "options": options,
                 },
             }
@@ -82,7 +83,7 @@ async def coordinator_node(state: AgentState) -> dict[str, Any]:
         "conflicts_found": conflicts,
         "conflict_count": len(conflicts),
         **_mock_coordinate(conflicts),
-        "pending_action": {"type": "conflict_resolution", "options": mock_options},
+        "pending_action": {"type": "conflict_resolution", "stage": "waiting_choice", "options": mock_options},
     }
     print("COORDINATOR OUTPUT:", r)
     return r
