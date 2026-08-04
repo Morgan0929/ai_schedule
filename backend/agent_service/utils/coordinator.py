@@ -66,13 +66,19 @@ async def coordinator_node(state: AgentState) -> dict[str, Any]:
             print("COORDINATOR OUTPUT:", r)
             return r
 
-    # Mock 分支也存 pending_action
+    # Mock: 始终 A/B/C 三个选项
     mock_options = {}
-    for i, c in enumerate(conflicts[:3]):
-        mock_options[chr(ord("A") + i)] = {
-            "action": "move_new",
-            "task": c.get("task_b", ""),
-            "conflict_with": c.get("task_a", ""),
+    c0 = conflicts[0] if conflicts else {}
+    defaults = [
+        ("A", "move_new", "将新任务延后"),
+        ("B", "move_old", "将已有任务提前"),
+        ("C", "cancel_new", "取消新任务"),
+    ]
+    for plan_id, action, desc in defaults:
+        mock_options[plan_id] = {
+            "action": action, "description": desc,
+            "task": c0.get("task_b", ""),
+            "conflict_with": c0.get("task_a", ""),
         }
     r = {
         "conflicts_found": conflicts,
