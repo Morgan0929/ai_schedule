@@ -170,18 +170,18 @@ class AgentTracer:
             async with async_session_factory() as db:
                 await db.execute(text("""
                     INSERT INTO agent_session (id, user_id, title, messages, agent_state, is_active)
-                    VALUES (:id, :user_id, :title, CAST(:messages AS jsonb), CAST(:state AS jsonb), true)
+                    VALUES (:id, :user_id, :title, :messages::jsonb, :state::jsonb, true)
                     ON CONFLICT (id) DO UPDATE SET
-                        messages = agent_session.messages || CAST(:append_msg AS jsonb),
-                        agent_state = CAST(:state AS jsonb),
+                        messages = agent_session.messages || :append_msg::jsonb,
+                        agent_state = :state::jsonb,
                         updated_at = CURRENT_TIMESTAMP
                 """), {
                     "id": uuid.UUID(self.session_id) if len(self.session_id) == 36 else uuid.uuid4(),
                     "user_id": self.user_id,
                     "title": self.user_input[:100],
-                    "messages": json.dumps([{"role": "user", "content": self.user_input}]),
-                    "append_msg": json.dumps([{"role": "assistant", "content": summary["final_reply"][:500]}]),
-                    "state": json.dumps(summary, ensure_ascii=False),
+                    "messages": [{"role": "user", "content": self.user_input}],
+                    "append_msg": [{"role": "assistant", "content": summary["final_reply"][:500]}],
+                    "state": summary,
                 })
                 await db.commit()
                 logger.info(f"Trace {self.trace_id} persisted to PostgreSQL")
