@@ -42,19 +42,18 @@ async def execute_tool(tool_name: str, params: dict[str, Any], user_id: int) -> 
 
 # ============ 日历查询 ============
 
-async def query_calendar(user_id: int, start: str = None, end: str = None,
+async def query_calendar(user_id: int, start_time: str = None, end_time: str = None,
+                         start: str = None, end: str = None,
                          start_date: str = None, end_date: str = None) -> list[dict]:
     """查询用户日历"""
-    from timeline_service.repository.task_repo import TaskRepository
+    # 统一参数名: start_time/end_time 优先
+    s = start_time or start or start_date
+    e = end_time or end or end_date
 
-    # 范围查询: 有 start_time 则窗口±2h, 没给则全天
     try:
-        if start or start_date:
-            s = start or start_date
+        if s:
             start_dt = datetime.fromisoformat(s) if "T" in str(s) else datetime.fromisoformat(str(s))
-            # end 默认 start+2h, 或当天结束
-            if end or end_date:
-                e = end or end_date
+            if e:
                 end_dt = datetime.fromisoformat(e) if "T" in str(e) else datetime.fromisoformat(str(e))
             elif "T" in str(s):
                 end_dt = start_dt + timedelta(hours=2)

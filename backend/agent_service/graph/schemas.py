@@ -30,9 +30,8 @@ class Intent(str, Enum):
 
 
 def normalize_intent(raw: str) -> Intent:
-    """统一意图名: query_calendar→query_schedule, create_task→create_event 等"""
+    """统一意图名: create_task→create_event, query_calendar→query_schedule"""
     mapping = {
-        # 旧名 → 新名
         "query_calendar": Intent.QUERY_SCHEDULE,
         "query_event": Intent.QUERY_SCHEDULE,
         "create_task": Intent.CREATE_EVENT,
@@ -40,6 +39,9 @@ def normalize_intent(raw: str) -> Intent:
         "update_task": Intent.UPDATE_EVENT,
         "conflict_negotiation": Intent.DETECT_CONFLICT,
         "casual_chat": Intent.CHAT,
+        "create_event": Intent.CREATE_EVENT,
+        "create_todo": Intent.CREATE_TODO,
+        "create_reminder": Intent.CREATE_REMINDER,
     }
     lower = raw.lower().strip()
     if lower in mapping:
@@ -48,6 +50,38 @@ def normalize_intent(raw: str) -> Intent:
         return Intent(lower)
     except ValueError:
         return Intent.UNKNOWN
+
+
+def planner_output_normalizer(raw: dict) -> dict:
+    """自动修复 LLM 输出的常见错误: intent命名/字段缺失/参数名"""
+    out = dict(raw)
+
+    # intent 统一
+    if "intent" in out:
+        out["intent"] = normalize_intent(str(out["intent"])).value
+
+    # entities: start→start_time, end→end_time
+    entities = out.get("entities", {})
+    if isinstance(entities, dict):
+        if "start" in entities and "start_time" not in entities:
+            entities["start_time"] = entities.pop("start")
+        if "end" in entities and "end_time" not in entities:
+            entities["end_time"] = entities.pop("end")
+
+    # tool 映射
+    tool_map = {
+        "create_task": "create_task", "create_event": "create_task",
+        "calendar_query": "check_calendar", "query_calendar": "check_calendar",
+        "query_schedule": "check_calendar", "weather_query": "query_weather",
+    }
+    if out.get("tool"):
+        out["tool"] = tool_map.get(out["tool"], out["tool"])
+
+    # default confidence
+    if "confidence" not in out or not out["confidence"]:
+        out["confidence"] = 0.85
+
+    return out
 
 
 class PlannerOutput(BaseModel):
