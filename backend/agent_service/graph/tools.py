@@ -395,6 +395,19 @@ async def search_knowledge(user_id: int, query: str, top_k: int = 3) -> list[dic
 
 
 
+# ============ Todo 工具 ============
+
+async def create_todo_tool(user_id: int, title: str, note: str = "",
+                           priority: str = "MEDIUM") -> dict:
+    from agent_service.graph.todo_service import create_todo
+    return await create_todo(user_id, title, note, priority)
+
+
+async def list_todos_tool(user_id: int) -> list[dict]:
+    from agent_service.graph.todo_service import list_todos
+    return await list_todos(user_id)
+
+
 # ============ MCP 工具函数 (外部能力) ============
 
 async def mcp_weather_current(user_id: int, city: str = "北京") -> dict:
@@ -433,7 +446,10 @@ TOOL_MAP = {
     "analyze_document": analyze_document,
     # 知识库
     "search_knowledge": search_knowledge,
-    # === MCP 外部服务 (Weather/Search/File) ===
+    # === Todo ===
+    "create_todo_tool": create_todo_tool,
+    "list_todos": list_todos_tool,
+    # === MCP 外部服务 ===
     "mcp_weather_current": mcp_weather_current,
     "mcp_weather_forecast": mcp_weather_forecast,
     "mcp_web_search": mcp_web_search,
