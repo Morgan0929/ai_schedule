@@ -15,6 +15,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from agent_service.graph.state import AgentState
 from agent_service.graph.planner import planner_node
+from agent_service.graph.conflict_resolver import conflict_resolver_node
 from agent_service.graph.state_inspector import state_inspector_node
 from agent_service.graph.entity_normalizer import entity_normalizer_node
 from agent_service.graph.validator import validator_node
@@ -281,6 +282,15 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
 
 # ============ 路由函数 ============
 
+def check_pending_action(state: AgentState) -> Literal["conflict_resolver", "planner"]:
+    """入口路由: 有pending_action → conflict_resolver, 否则 → planner"""
+    pending = state.get("pending_action", {})
+    if pending and pending.get("type") == "conflict_resolution":
+        print("ROUTE: pending_action found → conflict_resolver")
+        return "conflict_resolver"
+    return "planner"
+
+
 def needs_confirmation(state: AgentState) -> Literal["reply", "tools_executor"]:
     """Validator → Reply (需确认) 或 Tools Executor (通过)"""
     route = "reply" if state.get("needs_confirmation") else "tools_executor"
@@ -324,6 +334,7 @@ def build_agent_graph() -> StateGraph:
     workflow = StateGraph(AgentState)
 
     # 添加节点
+    workflow.add_node("conflict_resolver", conflict_resolver_node)
     workflow.add_node("planner", planner_node)
     workflow.add_node("state_inspector", state_inspector_node)
     workflow.add_node("entity_normalizer", entity_normalizer_node)
@@ -333,8 +344,14 @@ def build_agent_graph() -> StateGraph:
     workflow.add_node("coordinator", coordinator_node)
     workflow.add_node("reply", reply_node)
 
-    # 设置入口
-    workflow.set_entry_point("planner")
+    # 入口: check_pending → conflict_resolver 或 planner
+    workflow.set_conditional_entry_point(
+        check_pending_action,
+        {"conflict_resolver": "conflict_resolver", "planner": "planner"},
+    )
+
+    # conflict_resolver → inspector → normalizer → validator
+    workflow.add_edge("conflict_resolver", "state_inspector")
 
     # Planner → Inspector → Normalizer → Validator
     workflow.add_edge("planner", "state_inspector")
