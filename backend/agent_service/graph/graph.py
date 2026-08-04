@@ -91,9 +91,15 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
                     tasks_created.append(tool_result["id"])
                     actions_taken.append(f"创建任务「{tool_result.get('title', '')}」")
                 elif isinstance(tool_result, dict) and tool_result.get("conflict_level") == "SOFT":
-                    # SOFT冲突: 允许创建, 但加警告
+                    # SOFT冲突: 允许创建, 但显示临近日程
                     tasks_created.append(tool_result.get("id", 0))
-                    actions_taken.append(f"[提醒] {tool_result.get('error','')}，仍已创建「{tool_result.get('title','')}」")
+                    near = tool_result.get("conflicts", [])
+                    for n in near:
+                        actions_taken.append(
+                            f"提醒: {n.get('task_a','')}在{n.get('task_a_time','')}, "
+                            f"与{n.get('task_b','')}相距不到30分钟"
+                        )
+                    actions_taken.append(f"创建任务「{tool_result.get('title', '')}」")
                 elif isinstance(tool_result, dict) and tool_result.get("conflicts"):
                     conflicts_found.extend(tool_result["conflicts"])
             elif action in ("update_task", "update_task_tool"):
