@@ -16,6 +16,7 @@ async def get_redis() -> aioredis.Redis:
             settings.redis_url,
             encoding="utf-8",
             decode_responses=True,
+            protocol=2,  # RESP2, 兼容旧版 Redis
         )
     return redis_pool
 
