@@ -22,14 +22,16 @@ def normalize_planner_result(
     if intent_str in ("unknown", "UNKNOWN"):
         intent_str = "chat"
 
-    # normalize calendar params: date→start_time/end_time
+    # ScheduleQuery normalize: date/day/start → start_time/end_time
     tasks = list(sub_tasks or [])
     for t in tasks:
         p = t.get("params", {}) if isinstance(t.get("params"), dict) else {}
-        if "date" in p and "start_time" not in p:
-            d = p.pop("date")
-            p["start_time"] = f"{d}T00:00:00" if "T" not in str(d) else str(d)
-            p["end_time"] = f"{d}T23:59:59" if "T" not in str(d) else str(d)
+        if t.get("action") in ("check_calendar", "query_calendar"):
+            from agent_service.graph.calendar_service import ScheduleQuery
+            q = ScheduleQuery.from_params(p)
+            if q:
+                s, e = q.to_iso()
+                t["params"] = {"start_time": s, "end_time": e}
 
     result = {
         "intent": intent_str,
