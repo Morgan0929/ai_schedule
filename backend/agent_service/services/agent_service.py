@@ -144,12 +144,12 @@ class AgentService:
                 initial_state["messages"].append(SystemMessage(content=recent_summary))
 
             working = await WorkingMemory.get(session_id)
+            print("LOAD PENDING ACTION:", working.get("pending_action") if working else None)
             if working:
                 if working.get("intent"):
                     initial_state["intent"] = working.get("intent", "")
                 if working.get("pending_action"):
                     initial_state["pending_action"] = working["pending_action"]
-                    print("RESTORE STATE: pending_action=", working["pending_action"])
 
             if should_summarize(initial_state["messages"]):
                 logger.info("Token threshold exceeded, running Summary Node...")
