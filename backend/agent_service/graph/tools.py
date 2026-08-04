@@ -53,7 +53,8 @@ async def query_calendar(user_id: int, start_time: str = None, end_time: str = N
     try:
         if s:
             start_dt = datetime.fromisoformat(s) if "T" in str(s) else datetime.fromisoformat(str(s))
-            if e:
+            # end==start 时视为未提供, 扩展到当天结束
+            if e and e != s:
                 end_dt = datetime.fromisoformat(e) if "T" in str(e) else datetime.fromisoformat(str(e))
             elif "T" in str(s):
                 end_dt = start_dt + timedelta(hours=2)
