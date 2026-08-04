@@ -15,14 +15,17 @@ CONFIDENCE_THRESHOLD = 0.8  # 低于此值需要用户确认
 
 
 def _normalize_return(r: dict) -> dict:
-    """P2: PlannerOutputNormalizer — 所有返回路径统一经过这里"""
-    r["intent"] = str(r.get("intent", "chat"))
+    """PlannerOutputNormalizer — 所有返回路径统一经过这里"""
+    from agent_service.graph.schemas import normalize_intent
+    raw = str(r.get("intent", "chat"))
+    normalized = normalize_intent(raw)
+    r["intent"] = normalized.value if hasattr(normalized, 'value') else str(normalized)
     r.setdefault("sub_tasks", [])
     r.setdefault("needs_confirmation", False)
-    if r.get("intent") in ("unknown", "UNKNOWN"):
+    if r["intent"] in ("unknown", "UNKNOWN"):
         r["intent"] = "chat"
     import json
-    print(f"FINAL PLANNER RETURN [type={type(r['intent']).__name__}]",
+    print(f"FINAL PLANNER RETURN [intent={r['intent']}]",
           json.dumps(r, ensure_ascii=False, default=str)[:500])
     return r
 
