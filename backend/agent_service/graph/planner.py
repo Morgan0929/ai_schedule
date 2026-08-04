@@ -22,10 +22,21 @@ def normalize_planner_result(
     if intent_str in ("unknown", "UNKNOWN"):
         intent_str = "chat"
 
-    # ScheduleQuery normalize: date/day/start → start_time/end_time
+    # 统一时间字段: start→start_time, end→end_time, 删旧字段
     tasks = list(sub_tasks or [])
     for t in tasks:
         p = t.get("params", {}) if isinstance(t.get("params"), dict) else {}
+        # start → start_time
+        if "start" in p:
+            if "start_time" not in p:
+                p["start_time"] = p["start"]
+            del p["start"]
+        # end → end_time
+        if "end" in p:
+            if "end_time" not in p:
+                p["end_time"] = p["end"]
+            del p["end"]
+        # date → ScheduleQuery
         if t.get("action") in ("check_calendar", "query_calendar"):
             from agent_service.graph.calendar_service import ScheduleQuery
             q = ScheduleQuery.from_params(p)
@@ -148,12 +159,19 @@ def _detect_event_statement(text: str) -> dict[str, Any]:
     is_query = any(qw in text for qw in question_words) or "?" in text or "？" in text
     has_event = len(event_title) >= 2 and not is_query
 
-    entities = {"title": event_title, **time_info}
+    entities = {"title": event_title}
     if h:
         d = date.today()
         if "明天" in text: d += __import__('datetime').timedelta(days=1)
         elif "后天" in text: d += __import__('datetime').timedelta(days=2)
         entities["start_time"] = f"{d.isoformat()}T{h:02d}:00:00"
+        entities["end_time"] = f"{d.isoformat()}T{h + 1:02d}:00:00"
+    else:
+        # 只传start_time/end_time, 不传start/end
+        s = time_info.get("start", "")
+        e = time_info.get("end", s)
+        entities["start_time"] = s if s else date.today().isoformat()
+        entities["end_time"] = e if e != s else entities["start_time"]
 
     if has_time and has_event:
         return {"intent": "create_event", "sub_tasks": [
