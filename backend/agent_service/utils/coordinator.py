@@ -51,10 +51,19 @@ async def coordinator_node(state: AgentState) -> dict[str, Any]:
             print("COORDINATOR OUTPUT:", r)
             return r
 
+    # Mock 分支也存 pending_action
+    mock_options = {}
+    for i, c in enumerate(conflicts[:3]):
+        mock_options[chr(ord("A") + i)] = {
+            "action": "move_new",
+            "task": c.get("task_b", ""),
+            "conflict_with": c.get("task_a", ""),
+        }
     r = {
         "conflicts_found": conflicts,
         "conflict_count": len(conflicts),
         **_mock_coordinate(conflicts),
+        "pending_action": {"type": "conflict_resolution", "options": mock_options},
     }
     print("COORDINATOR OUTPUT:", r)
     return r
