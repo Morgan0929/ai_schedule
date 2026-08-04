@@ -151,8 +151,15 @@ def _detect_event_statement(text: str) -> dict[str, Any]:
         ], "confidence": 0.85, "source": "event_detector"}
 
     if has_time and not has_event:
+        # query: 转成完整时间范围
+        start_str = time_info.get("start", date.today().isoformat())
+        end_str = time_info.get("end", start_str)
+        query_params = {
+            "start_time": f"{start_str}T00:00:00" if "T" not in start_str else start_str,
+            "end_time": f"{end_str}T23:59:59" if "T" not in end_str else end_str,
+        }
         return {"intent": "query_schedule", "sub_tasks": [
-            {"action": "check_calendar", "params": time_info},
+            {"action": "check_calendar", "params": query_params},
         ], "confidence": 0.7, "source": "event_detector"}
 
     return {"intent": "chat", "sub_tasks": [], "confidence": 0.0, "source": "event_detector"}

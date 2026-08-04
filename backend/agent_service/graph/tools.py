@@ -42,30 +42,21 @@ async def execute_tool(tool_name: str, params: dict[str, Any], user_id: int) -> 
 
 # ============ 日历查询 ============
 
-async def query_calendar(user_id: int, start_time: str = None, end_time: str = None,
-                         start: str = None, end: str = None,
-                         start_date: str = None, end_date: str = None) -> list[dict]:
-    """查询用户日历"""
-    # 统一参数名: start_time/end_time 优先
-    s = start_time or start or start_date
-    e = end_time or end or end_date
+async def query_calendar(user_id: int, start_time: str = None, end_time: str = None) -> list[dict]:
+    """查询用户日历 — 只接受 start_time/end_time (Planner负责转成时间范围)"""
+    if not start_time:
+        return []  # 无时间参数 → 不查
 
     try:
-        if s:
-            start_dt = datetime.fromisoformat(s) if "T" in str(s) else datetime.fromisoformat(str(s))
-            # end==start 时视为未提供, 扩展到当天结束
-            if e and e != s:
-                end_dt = datetime.fromisoformat(e) if "T" in str(e) else datetime.fromisoformat(str(e))
-            elif "T" in str(s):
-                end_dt = start_dt + timedelta(hours=2)
-            else:
-                end_dt = datetime.combine(start_dt.date(), datetime.max.time())
+        start_dt = datetime.fromisoformat(start_time)
+        if end_time:
+            end_dt = datetime.fromisoformat(end_time)
+        elif "T" in start_time:
+            end_dt = start_dt + timedelta(hours=2)
         else:
-            start_dt = datetime.combine(date.today(), datetime.min.time())
-            end_dt = datetime.combine(date.today(), datetime.max.time())
+            end_dt = datetime.combine(start_dt.date(), datetime.max.time())
     except ValueError:
-        start_dt = datetime.combine(date.today(), datetime.min.time())
-        end_dt = datetime.combine(date.today(), datetime.max.time())
+        return []
 
     try:
         import asyncpg
