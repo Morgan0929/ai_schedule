@@ -311,13 +311,23 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
 
 # ============ 路由函数 ============
 
+def _is_simple_choice(text: str) -> bool:
+    """判断是否为简单选择: A/B/C/确认/是/否"""
+    t = text.strip().upper()
+    return t in ("A", "B", "C", "确认", "是", "YES", "Y", "OK")
+
+
 def check_pending_action(state: AgentState) -> Literal["conflict_resolver", "planner"]:
-    """入口路由"""
+    """入口路由: 简单选择→resolver, 复杂修改→planner"""
     pending = state.get("pending_action", {})
     print("CURRENT PENDING ACTION:", pending)
     if pending and pending.get("type") == "conflict_resolution" and pending.get("options"):
-        print("ROUTE: → conflict_resolver")
-        return "conflict_resolver"
+        user_input = state.get("user_input", "").strip()
+        if _is_simple_choice(user_input):
+            print("ROUTE: simple choice → conflict_resolver")
+            return "conflict_resolver"
+        else:
+            print("ROUTE: complex modification → planner (with pending context)")
     return "planner"
 
 
