@@ -60,21 +60,50 @@ def normalize_planner_result(
 
 async def planner_node(state: AgentState) -> dict[str, Any]:
     user_input = state["user_input"]
-
-    # ① Context Resolver
     pending = state.get("pending_action", {})
+
+    # ① 纯B/C → 不归这里, graph already routes to conflict_resolver
+
+    # ② 有pending但复杂修改: "B方案 挪到晚上11点" → 提取时间+标记选择
     if pending.get("type") == "conflict_resolution":
-        options = pending.get("options", {})
-        choice = user_input.strip().upper()
-        if choice in options:
-            opt = options[choice]
+        selected = None
+        for plan_id in ("A", "B", "C"):
+            if plan_id in user_input.upper():
+                selected = plan_id
+                break
+        if selected:
+            # 提取用户指定的新时间
+            from agent_service.llm.mock_agent import _extract_hour
+            h = _extract_hour(user_input)
+            new_time = None
+            if h is not None:
+                from datetime import timedelta
+                d = date.today() + timedelta(days=1) if h < 12 else timedelta(days=0)
+                d = date.today() + d
+                new_time = f"{d.isoformat()}T{h:02d}:00:00"
+
+            opt = pending["options"].get(selected, {})
             return normalize_planner_result(
                 "update_event",
-                [{"action": "update_task", "params": {"target": opt["task"], "hint": user_input}}],
-                source="context_resolver", pending_action={},
+                [{"action": "update_task", "params": {
+                    "title": opt.get("new_task", opt.get("existing_task", "")),
+                    "start_time": new_time or "",
+                    "hint": user_input,
+                }}],
+                source="conflict_modifier",
+                pending_action={
+                    "type": "conflict_resolution",
+                    "stage": "waiting_confirm",
+                    "selected_plan": selected,
+                    "proposed_actions": [{
+                        "action": "update_task",
+                        "target": opt.get("new_task", opt.get("existing_task", "")),
+                        "new_time": new_time or "need_clarify",
+                    }],
+                },
             )
 
-    # ② LLM
+    # ③ LLM
     if is_llm_available():
         result = await _llm_plan(user_input)
         if result and str(result.intent) not in ("unknown", "chat"):
