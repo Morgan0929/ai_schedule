@@ -44,8 +44,7 @@ class AgentService:
     @staticmethod
     async def chat_stream(request: AgentChatRequest):
         """流式对话 — 执行 LangGraph 工作流 + 流式 Reply"""
-        from datetime import date
-        session_id = request.session_id or f"u{request.user_id or 0}_{date.today().isoformat()}"
+        session_id = request.session_id or f"u{request.user_id or 0}:active"
         tracer = start_trace(session_id=session_id,
                              user_id=request.user_id or 0,
                              user_input=request.message)
@@ -107,9 +106,8 @@ class AgentService:
     @staticmethod
     async def chat(request: AgentChatRequest) -> AgentChatResponse:
         """非流式对话 — LangGraph 工作流 + Memory + Trace"""
-        # 同一天同一用户复用 session: u{user_id}_{date}
-        from datetime import date
-        session_id = request.session_id or f"u{request.user_id or 0}_{date.today().isoformat()}"
+        # 会话状态: u{user_id}:active, 跨天不丢失
+        session_id = request.session_id or f"u{request.user_id or 0}:active"
         print(f"SESSION ID: {session_id} (from_request={'YES' if request.session_id else 'AUTO'})")
         tracer = start_trace(session_id=session_id,
                              user_id=request.user_id or 0,
