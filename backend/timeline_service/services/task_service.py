@@ -85,6 +85,15 @@ class TaskService:
         task = await self.repo.update(task)
         return TaskDTO.model_validate(task)
 
+    async def update_task_for_user(
+        self, user_id: int, task_id: int, dto: TaskUpdateDTO
+    ) -> TaskDTO:
+        """Update a task only when it belongs to the requesting user."""
+        task = await self.repo.find_by_id(task_id)
+        if not task or task.user_id != user_id:
+            raise NotFoundException("task", task_id)
+        return await self.update_task(task_id, dto)
+
     async def delete_task(self, task_id: int) -> bool:
         """删除任务"""
         success = await self.repo.delete(task_id)

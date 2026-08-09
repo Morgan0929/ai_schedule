@@ -61,7 +61,7 @@ async def query_calendar(user_id: int, start_time: str = None, end_time: str = N
     try:
         import asyncpg
         from common.config import Settings; s_cfg = Settings()
-        print(f"QUERY CALENDAR: start={start_dt} end={end_dt}")
+        print(f"[TOOL] query_calendar {start_dt}~{end_dt}")
         conn = await asyncpg.connect(
             host=s_cfg.POSTGRES_HOST, port=s_cfg.POSTGRES_PORT,
             user=s_cfg.POSTGRES_USER, password=s_cfg.POSTGRES_PASSWORD,
@@ -70,7 +70,6 @@ async def query_calendar(user_id: int, start_time: str = None, end_time: str = N
             "SELECT id,title,start_time,end_time,priority,location,category "
             "FROM task WHERE user_id=$1 AND start_time < $2 AND end_time > $3 "
             "ORDER BY start_time", user_id, end_dt, start_dt)
-        print(f"DB RESULT: {len(rows)} rows — {[(r['title'], str(r['start_time'])[:16]) for r in rows]}")
         await conn.close()
         return [{"id": r["id"], "title": r["title"],
                  "start_time": r["start_time"].isoformat(),
@@ -81,7 +80,47 @@ async def query_calendar(user_id: int, start_time: str = None, end_time: str = N
         return []
 
 
-# ============ 任务 CRUD ============
+# ============ PendingTask → Task (新流程) ============
+
+async def create_pending_tool(user_id: int, title: str, start_time: str = "",
+                               end_time: str = "") -> dict:
+    """
+    新流程: 用户新任务先存 Redis PendingTask, 检查冲突后再决定是否入库
+
+    - 无冲突 → 直接 commit 到 PostgreSQL
+    - 有冲突 → 返回冲突信息, PendingTask 留在 Redis 等用户决策
+    """
+    from agent_service.graph.pending_task import (
+        create_pending, save_pending, check_pending_conflicts, commit_pending,
+        pending_ref, task_ref,
+    )
+
+    pending = create_pending(title, start_time, end_time)
+    await save_pending(pending)
+
+    conflicts = await check_pending_conflicts(pending, user_id)
+
+    if not conflicts:
+        # 无冲突 → 直接入库
+        result = await commit_pending(pending["ref_id"], user_id)
+        return result
+
+    # 有冲突 → 返回冲突 + pending 信息
+    return {
+        "status": "conflict",
+        "conflict_level": conflicts[0].get("level", "HARD"),
+        "pending_ref": pending["ref_id"],
+        "pending_task": {
+            "ref_id": pending["ref_id"],
+            "title": pending["title"],
+            "start_time": pending["start_time"],
+            "end_time": pending["end_time"],
+        },
+        "conflicts": conflicts,
+    }
+
+
+# ============ 任务 CRUD (保留兼容) ============
 
 async def create_task_tool(user_id: int, title: str, start_time: str = None,
                            end_time: str = None, start: str = None, end: str = None,
@@ -139,24 +178,36 @@ async def create_task_tool(user_id: int, title: str, start_time: str = None,
             dto.end_time + timedelta(minutes=30))
 
         if hard:
-            conflicts = [{"task_a": r["title"], "task_b": dto.title,
-                          "task_a_time": str(r["start_time"])[:16],
-                          "task_b_time": str(dto.start_time)[:16],
-                          "level": "HARD"} for r in hard]
+            from agent_service.graph.pending_task import create_pending_task, db_task_ref, pending_task_ref
+            conflicts = [{
+                "existing_task": db_task_ref(r["id"], r["title"], str(r["start_time"])[:16]),
+                "new_task": pending_task_ref(
+                    create_pending_task(dto.title, str(dto.start_time), str(dto.end_time))
+                ),
+                "level": "HARD",
+            } for r in hard]
             await conn.close()
             return {"error": "与已有任务时间重叠", "status": "conflict",
                     "conflict_level": "HARD", "conflicts": conflicts}
 
         if soft:
-            near = [{"task_a": r["title"], "task_b": dto.title,
-                     "task_a_time": str(r["start_time"])[:16],
-                     "level": "SOFT"} for r in soft
-                    if r not in hard]
+            from agent_service.graph.pending_task import create_pending_task, db_task_ref, pending_task_ref
+            near = [{
+                "existing_task": db_task_ref(r["id"], r["title"], str(r["start_time"])[:16]),
+                "new_task": pending_task_ref(
+                    create_pending_task(dto.title, str(dto.start_time), str(dto.end_time))
+                ),
+                "level": "SOFT",
+            } for r in soft if r not in hard]
             # SOFT conflict → 仍然创建, 附加警告
             tid = await conn.fetchval(
                 "INSERT INTO task (user_id,title,start_time,end_time,priority,status,location,category,tags,task_metadata) "
                 "VALUES ($1,$2,$3,$4,$5,'PENDING',$6,$7,'[]','{}') RETURNING id",
                 user_id, dto.title, dto.start_time, dto.end_time, priority, location, category)
+            # 回填: SOFT 下已成功创建, 升级为 database
+            for n in near:
+                n["new_task"]["id"] = tid
+                n["new_task"]["source"] = "database"
             await conn.close()
             return {"id": tid, "title": dto.title, "status": "created",
                     "conflict_level": "SOFT", "conflicts": near,
@@ -188,23 +239,91 @@ def _normalize_datetime(dt_str: str, is_end: bool = False, reference_start: str 
     return dt_str
 
 
-async def update_task_tool(user_id: int, task_id: int, **kwargs) -> dict:
-    """更新任务"""
+async def update_task_tool(user_id: int, task_id: int = None, title: str = None,
+                           new_time: str = None, start_time: str = None,
+                           **kwargs) -> dict:
+    """
+    更新任务 — 支持 task_id 或 title 定位
+
+    conflict_resolver 只知道 title (不知道 task_id),
+    这里做 title → task_id 的查找
+    """
     from common.schemas.task import TaskUpdateDTO
     from timeline_service.services.task_service import TaskService
+
+    # ── task_id 不存在时, 用 title 查找 ──
+    if task_id is None and title:
+        try:
+            import asyncpg
+            from common.config import Settings; s = Settings()
+            conn = await asyncpg.connect(
+                host=s.POSTGRES_HOST, port=s.POSTGRES_PORT,
+                user=s.POSTGRES_USER, password=s.POSTGRES_PASSWORD,
+                database=s.POSTGRES_DB, timeout=5)
+            row = await conn.fetchrow(
+                "SELECT id FROM task WHERE user_id=$1 AND title=$2 "
+                "ORDER BY start_time DESC LIMIT 1",
+                user_id, title)
+            await conn.close()
+            if row:
+                task_id = row["id"]
+            else:
+                return {"error": f"未找到任务「{title}」", "status": "not_found"}
+        except Exception as e:
+            return {"error": str(e), "status": "lookup_error"}
+
+    if task_id is None:
+        return {"error": "缺少 task_id 或 title", "status": "missing_param"}
 
     # 转换枚举值
     if "priority" in kwargs and isinstance(kwargs["priority"], str):
         from common.schemas.task import PriorityEnum
         kwargs["priority"] = PriorityEnum(kwargs["priority"])
 
-    dto = TaskUpdateDTO(**{k: v for k, v in kwargs.items() if v is not None})
+    # 构建 update DTO
+    update_fields = {k: v for k, v in kwargs.items() if v is not None}
+    if new_time or start_time:
+        try:
+            from datetime import datetime as dt_cls
+            t = new_time or start_time
+            update_fields["start_time"] = dt_cls.fromisoformat(t)
+        except (ValueError, TypeError):
+            pass
+
+    dto = TaskUpdateDTO(**update_fields)
 
     async with async_session_factory() as db:
         service = TaskService(db)
-        task = await service.update_task(task_id, dto)
+        try:
+            task = await service.update_task(task_id, dto)
+        except NotFoundException:
+            if title:
+                try:
+                    import asyncpg
+                    from common.config import Settings; s = Settings()
+                    conn = await asyncpg.connect(
+                        host=s.POSTGRES_HOST, port=s.POSTGRES_PORT,
+                        user=s.POSTGRES_USER, password=s.POSTGRES_PASSWORD,
+                        database=s.POSTGRES_DB, timeout=5)
+                    row = await conn.fetchrow(
+                        "SELECT id FROM task WHERE user_id=$1 AND title=$2 "
+                        "ORDER BY start_time DESC LIMIT 1",
+                        user_id, title)
+                    await conn.close()
+                    if row:
+                        task_id = row["id"]
+                        task = await service.update_task(task_id, dto)
+                    else:
+                        return {"error": f"未找到任务「{title}」", "status": "not_found"}
+                except Exception as e:
+                    return {"error": str(e), "status": "lookup_error"}
+            else:
+                return {"error": f"未找到任务 #{task_id}", "status": "not_found"}
+
         await db.commit()
-        return {"id": task.id, "title": task.title, "status": "updated"}
+        return {"id": task.id, "title": task.title,
+                "new_time": (new_time or start_time or ""),
+                "status": "updated"}
 
 
 async def delete_task_tool(user_id: int, task_id: int) -> dict:
@@ -220,23 +339,48 @@ async def delete_task_tool(user_id: int, task_id: int) -> dict:
 
 # ============ 天气工具 ============
 
-async def query_weather(user_id: int, city: str = "北京", target_date: str = None) -> dict:
+async def query_weather(user_id: int, city: str = "北京", date: str = None,
+                        target_date: str = None) -> dict:
     """
-    查询天气 — MCP Weather Server (wttr.in 实时)
+    查询天气 — MCP Weather Server / wttr.in 实时
+
+    统一返回格式:
+      {
+        "city": "英德",
+        "query_date": "2026-08-09",
+        "weather": {
+          "temp_min": 27, "temp_max": 35,
+          "desc": "Sunny", "humidity": 75
+        }
+      }
 
     Args:
         city: 城市名，默认北京
+        date:  目标日期 ISO (优先)
+        target_date: 兼容旧参数名
     """
-    # MCP Weather Server 直接调用 (不经过 LLM)
+    query_date = date or target_date or date.today().isoformat()
+
+    # ── MCP Weather Server (优先) ──
     try:
         from agent_service.mcp.client import call_mcp_tool
         r = await call_mcp_tool("weather", "get_current_weather", {"city": city})
         if r.get("success") and r.get("data"):
-            return {"city": city, "source": "mcp", **r["data"]}
+            data = r["data"]
+            return {
+                "city": city,
+                "query_date": query_date,
+                "weather": {
+                    "temp_min": data.get("temp_min", data.get("temp_c", "")),
+                    "temp_max": data.get("temp_max", data.get("temp_c", "")),
+                    "desc": data.get("desc", data.get("weatherDesc", "")),
+                    "humidity": data.get("humidity", ""),
+                },
+            }
     except Exception:
         pass
 
-    # Fallback: wttr.in
+    # ── Fallback: wttr.in ──
     try:
         import httpx
         url = f"https://wttr.in/{city}?format=j1"
@@ -246,25 +390,36 @@ async def query_weather(user_id: int, city: str = "北京", target_date: str = N
             raw = resp.json()
 
         current = raw.get("current_condition", [{}])[0]
-        forecasts = raw.get("weather", [])[:3]
+        forecasts = raw.get("weather", [])
+        temp_min = ""
+        temp_max = ""
+        desc = current.get("weatherDesc", [{}])[0].get("value", "")
+        humidity = current.get("humidity", "?")
+
+        # 匹配目标日期的 forecast
+        for f in forecasts:
+            f_date = f.get("date", "")
+            if f_date == query_date or (not temp_min):
+                temp_min = f"{f.get('mintempC', '?')}"
+                temp_max = f"{f.get('maxtempC', '?')}"
+                if f_date == query_date:
+                    hourly = f.get("hourly", [{}])
+                    desc = hourly[4].get("weatherDesc", [{}])[0].get("value", desc) if len(hourly) > 4 else desc
+                    break
 
         return {
-            "city": city, "source": "realtime",
-            "current": {
-                "temp": f"{current.get('temp_C', '?')}C",
-                "desc": current.get("weatherDesc", [{}])[0].get("value", ""),
-                "humidity": f"{current.get('humidity', '?')}%",
-                "wind": f"{current.get('windspeedKmph', '?')} km/h",
+            "city": city,
+            "query_date": query_date,
+            "weather": {
+                "temp_min": temp_min,
+                "temp_max": temp_max,
+                "desc": desc,
+                "humidity": humidity,
             },
-            "daily": [{
-                "date": f.get("date", ""),
-                "high": f"{f.get('maxtempC', '?')}C",
-                "low": f"{f.get('mintempC', '?')}C",
-                "desc": f.get("hourly", [{}])[4].get("weatherDesc", [{}])[0].get("value", ""),
-            } for f in forecasts],
         }
     except Exception as e:
-        return {"city": city, "source": "unavailable", "error": str(e)}
+        return {"city": city, "query_date": query_date, "weather": None,
+                "error": str(e)}
 
 
 # ============ 地图 & 定位工具 ============
@@ -408,6 +563,24 @@ async def list_todos_tool(user_id: int) -> list[dict]:
     return await list_todos(user_id)
 
 
+async def save_pending_todo_tool(user_id: int, title: str,
+                                  due_date: str = "") -> dict:
+    """将待办写入 Redis (5min TTL), 无具体时间的事件先暂存"""
+    from agent_service.graph.pending_task import (
+        create_pending_todo, save_pending_todo, commit_todo_to_db, is_todo_committed,
+    )
+    todo = create_pending_todo(title, due_date)
+    await save_pending_todo(todo)
+    # 尝试立刻落库 (如有 due_date 且已明确)
+    if due_date:
+        result = await commit_todo_to_db(todo["ref_id"], user_id)
+        if result.get("id"):
+            return {"id": result["id"], "title": title, "status": "created",
+                    "ref_id": todo["ref_id"], "committed": True}
+    return {"ref_id": todo["ref_id"], "title": title,
+            "status": "pending", "committed": False}
+
+
 # ============ MCP 工具函数 (外部能力) ============
 
 async def mcp_weather_current(user_id: int, city: str = "北京") -> dict:
@@ -425,18 +598,212 @@ async def mcp_web_search(user_id: int, query: str, max_results: int = 5) -> dict
 
 # ============ 工具注册表 ============
 
+async def reschedule_pending_tool(user_id: int, ref_id: str = "",
+                                   start_time: str = "", new_time: str = "") -> dict:
+    """更新 Redis PendingTask 的时间 (不写 DB)"""
+    from agent_service.graph.pending_task import get_pending, save_pending
+    pending = await get_pending(ref_id)
+    if not pending:
+        return {"error": f"PendingTask not found: {ref_id}", "status": "not_found"}
+    t = new_time or start_time
+    if t:
+        try:
+            old_start = datetime.fromisoformat(pending["start_time"])
+            old_end = datetime.fromisoformat(pending.get("end_time", pending["start_time"]))
+            duration = old_end - old_start
+        except (TypeError, ValueError):
+            duration = timedelta(hours=1)
+        pending["start_time"] = t
+        pending["end_time"] = (
+            datetime.fromisoformat(t) + duration
+        ).isoformat()
+    pending["status"] = "rescheduled"
+    await save_pending(pending)
+    return {"ref_id": ref_id, "title": pending["title"],
+            "start_time": pending["start_time"], "status": "rescheduled"}
+
+
+async def commit_pending_tool(user_id: int, ref_id: str = "",
+                              title: str = "", new_time: str = "",
+                              start_time: str = "") -> dict:
+    """PendingTask → PostgreSQL. 冲突解决后调用."""
+    from agent_service.graph.pending_task import commit_pending
+    overrides = {}
+    t = new_time or start_time
+    if t:
+        overrides["start_time"] = t
+    return await commit_pending(ref_id, user_id, overrides if overrides else None)
+
+
+async def _query_calendar_shared(user_id: int, start_time: str = None,
+                                 end_time: str = None) -> list[dict]:
+    """Read tasks through the same SQLAlchemy engine used by timeline APIs."""
+    if not start_time:
+        return []
+    try:
+        start_dt = datetime.fromisoformat(start_time)
+        end_dt = datetime.fromisoformat(end_time) if end_time else start_dt + timedelta(hours=2)
+    except (TypeError, ValueError):
+        return []
+
+    from timeline_service.services.task_service import TaskService
+
+    async with async_session_factory() as db:
+        tasks, _ = await TaskService(db).list_tasks(
+            user_id, start=start_dt, end=end_dt, page=1, page_size=1000
+        )
+        return [task.model_dump(mode="json") for task in tasks]
+
+
+async def _create_task_shared(user_id: int, title: str, start_time: str = None,
+                              end_time: str = None, start: str = None,
+                              end: str = None, priority: str = "MEDIUM",
+                              location: str = None,
+                              category: str = "PERSONAL") -> dict:
+    """Create a task through the shared SQLAlchemy session."""
+    from common.schemas.task import TaskCreateDTO, PriorityEnum, TaskCategoryEnum
+    from common.exceptions import ConflictException
+    from timeline_service.services.task_service import TaskService
+
+    st = start_time or start or (datetime.now() + timedelta(hours=1)).isoformat()
+    st = _normalize_datetime(st)
+    et = _normalize_datetime(end_time or end) if (end_time or end) else (
+        datetime.fromisoformat(st) + timedelta(hours=1)
+    ).isoformat()
+    dto = TaskCreateDTO(
+        title=title,
+        start_time=datetime.fromisoformat(st),
+        end_time=datetime.fromisoformat(et),
+        priority=PriorityEnum(priority),
+        location=location,
+        category=TaskCategoryEnum(category),
+    )
+
+    try:
+        async with async_session_factory() as db:
+            task = await TaskService(db).create_task(dto, user_id)
+            await db.commit()
+            return {"id": task.id, "title": task.title,
+                    "start_time": task.start_time.isoformat(),
+                    "end_time": task.end_time.isoformat(), "status": "created"}
+    except ConflictException as exc:
+        return {"error": exc.message, "status": "conflict",
+                "conflict_level": "HARD", "conflicts": exc.detail or []}
+    except Exception as exc:
+        return {"error": str(exc), "status": "create_failed"}
+
+
+async def _update_task_shared(user_id: int, task_id: int = None, title: str = None,
+                              new_time: str = None, start_time: str = None,
+                              **kwargs) -> dict:
+    """Resolve and update a task from one user-scoped SQLAlchemy session."""
+    from common.schemas.task import TaskUpdateDTO, PriorityEnum
+    from common.exceptions import NotFoundException
+    from timeline_service.services.task_service import TaskService
+
+    if isinstance(kwargs.get("priority"), str):
+        kwargs["priority"] = PriorityEnum(kwargs["priority"])
+    update_fields = {key: value for key, value in kwargs.items() if value is not None}
+    time_value = new_time or start_time
+    if time_value:
+        try:
+            update_fields["start_time"] = datetime.fromisoformat(time_value)
+        except (TypeError, ValueError):
+            return {"error": "invalid start_time", "status": "invalid_param"}
+    if not update_fields:
+        return {"error": "no update fields", "status": "missing_param"}
+
+    async with async_session_factory() as db:
+        service = TaskService(db)
+        if task_id is None and title:
+            existing = await service.repo.find_latest_by_user_title(user_id, title)
+            task_id = existing.id if existing else None
+        if task_id is None:
+            return {"error": "task_id or title is required", "status": "missing_param"}
+        if time_value and "end_time" not in update_fields:
+            existing = await service.repo.find_by_id(task_id)
+            if existing:
+                duration = existing.end_time - existing.start_time
+                update_fields["end_time"] = datetime.fromisoformat(time_value) + duration
+        try:
+            task = await service.update_task_for_user(
+                user_id, task_id, TaskUpdateDTO(**update_fields)
+            )
+        except NotFoundException:
+            return {"error": f"task not found: {task_id}", "status": "not_found"}
+        await db.commit()
+        return {"id": task.id, "title": task.title,
+                "new_time": time_value or "", "status": "updated"}
+
+
+async def _delete_task_shared(user_id: int, task_id: int = None, title: str = "",
+                              time_range: dict | None = None) -> dict:
+    """Delete by id, or resolve one user-scoped task from an exact title and time range."""
+    from timeline_service.services.task_service import TaskService
+
+    async with async_session_factory() as db:
+        repo = TaskService(db).repo
+        task = None
+
+        if task_id:
+            task = await repo.find_by_id(task_id)
+            if not task or task.user_id != user_id:
+                return {"error": f"task not found: {task_id}", "status": "not_found"}
+        elif title and time_range:
+            try:
+                start = datetime.fromisoformat(time_range["start"])
+                end = datetime.fromisoformat(time_range["end"])
+            except (KeyError, TypeError, ValueError):
+                return {"error": "invalid task time range", "status": "invalid_request"}
+
+            matches = [
+                candidate for candidate in await repo.find_by_user_time_range(user_id, start, end)
+                if candidate.title == title
+            ]
+            if not matches:
+                return {"error": f"task not found: {title}", "status": "not_found"}
+            if len(matches) > 1:
+                return {
+                    "error": f"multiple tasks matched: {title}",
+                    "status": "ambiguous",
+                    "matches": [
+                        {"id": candidate.id, "title": candidate.title,
+                         "start_time": candidate.start_time.isoformat()}
+                        for candidate in matches
+                    ],
+                }
+            task = matches[0]
+        else:
+            return {"error": "task_id or title with time_range is required", "status": "invalid_request"}
+
+        await db.delete(task)
+        await db.commit()
+        return {"task_id": task.id, "title": task.title, "status": "deleted"}
+
+
+# Keep direct imports (for example calendar_service) on the same code path as
+# execute_tool and the public TOOL_MAP.
+query_calendar = _query_calendar_shared
+create_task_tool = _create_task_shared
+update_task_tool = _update_task_shared
+delete_task_tool = _delete_task_shared
+
+
 TOOL_MAP = {
     # 日历 & 任务
-    "query_calendar": query_calendar,
-    "check_calendar": query_calendar,
-    "create_task": create_task_tool,
-    "create_task_tool": create_task_tool,
-    "create_event": create_task_tool,
-    "update_task": update_task_tool,
-    "update_task_tool": update_task_tool,
-    "delete_task": delete_task_tool,
-    "delete_task_tool": delete_task_tool,
-    "delete_event": delete_task_tool,
+    "query_calendar": _query_calendar_shared,
+    "check_calendar": _query_calendar_shared,
+    "create_pending": create_pending_tool,
+    "reschedule_pending": reschedule_pending_tool,  # 更新 Redis PendingTask 时间
+    "commit_pending": commit_pending_tool,          # PendingTask → DB
+    "create_task": _create_task_shared,
+    "create_task_tool": _create_task_shared,
+    "create_event": _create_task_shared,
+    "update_task": _update_task_shared,
+    "update_task_tool": _update_task_shared,
+    "delete_task": _delete_task_shared,
+    "delete_task_tool": _delete_task_shared,
+    "delete_event": _delete_task_shared,
     # 天气 & 出行
     "query_weather": query_weather,
     "get_travel_time": get_travel_time,
@@ -448,11 +815,11 @@ TOOL_MAP = {
     "search_knowledge": search_knowledge,
     # === Todo ===
     "create_todo_tool": create_todo_tool,
+    "create_todo": create_todo_tool,
+    "save_pending_todo": save_pending_todo_tool,
     "list_todos": list_todos_tool,
     # === MCP 外部服务 ===
     "mcp_weather_current": mcp_weather_current,
     "mcp_weather_forecast": mcp_weather_forecast,
     "mcp_web_search": mcp_web_search,
 }
-
-

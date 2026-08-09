@@ -31,7 +31,7 @@ class AgentChatResponse(BaseModel):
     conflicts: list[dict] = Field(default_factory=list, description="检测到的冲突列表")
     suggestions: list[AgentSuggestion] = Field(default_factory=list, description="建议方案")
     tasks_created: list[int] = Field(default_factory=list, description="新创建的任务 ID 列表")
-    tasks_updated: list[int] = Field(default_factory=list, description="已更新的任务 ID 列表")
+    tasks_updated: list[dict] = Field(default_factory=list, description="已更新的任务 [{id, title, new_time}]")
     actions_taken: list[str] = Field(default_factory=list, description="Agent 执行的操作摘要")
 
 

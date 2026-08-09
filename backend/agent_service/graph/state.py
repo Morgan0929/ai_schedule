@@ -50,9 +50,21 @@ class AgentState(TypedDict, total=False):
     _confidence: float
     _source: str
     _validated: bool
+    _skip_validator: bool
+    _skip_planner: bool
 
     # Conflict Context (多轮)
     pending_action: dict
+    execution_context: dict
+    active_flow: str
+    pending_tasks: list[dict]
+    _pending_event: dict
+    schedule_found: bool
+    query_date_label: str
+    need_info: list[str]
+    _soft_warning: str
+    _flow_paused: bool
+    _paused_pending: dict
 
     # Middleware
     tool_calls_count: int

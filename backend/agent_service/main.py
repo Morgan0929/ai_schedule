@@ -26,7 +26,9 @@ import app_service.models.user_model     # noqa: F401
 from agent_service.services.agent_service import AgentService
 from agent_service.llm.deepseek_client import is_llm_available
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO))
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 

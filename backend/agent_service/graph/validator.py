@@ -14,8 +14,7 @@ from typing import Any
 
 
 def _vlog(prefix, data):
-    import json
-    print(prefix, json.dumps(data, ensure_ascii=False, default=str)[:500])
+    print(f"[VALIDATOR] {prefix} confirm={data.get('needs_confirmation',False)} issues={data.get('_issues',[])}"[:120])
 
 
 async def validator_node(state: dict) -> dict[str, Any]:
@@ -27,9 +26,8 @@ async def validator_node(state: dict) -> dict[str, Any]:
     user_input = state.get("user_input", "")
 
     # 1. intent 类型守卫 + 白名单
-    ALLOWED_INTENTS = {"create_event", "create_todo", "create_reminder",
+    ALLOWED_INTENTS = {"create_event", "update_event", "delete_event",
                        "query_schedule", "query_weather",
-                       "update_event", "delete_event", "arrange_trip",
                        "chat", "unknown"}
     if not isinstance(intent, str) or intent not in ALLOWED_INTENTS:
         r = {
@@ -48,9 +46,8 @@ async def validator_node(state: dict) -> dict[str, Any]:
 
     # 3. 任务类意图必须检查参数
     from agent_service.graph.schemas import Intent
-    task_intents = (Intent.CREATE_EVENT.value, Intent.CREATE_TODO.value,
-                    Intent.CREATE_REMINDER.value, Intent.UPDATE_EVENT.value,
-                    Intent.DELETE_EVENT.value, Intent.ARRANGE_TRIP.value)
+    task_intents = (Intent.CREATE_EVENT.value, Intent.UPDATE_EVENT.value,
+                    Intent.DELETE_EVENT.value)
     if intent in task_intents:
         issues = []
         task_params = {}

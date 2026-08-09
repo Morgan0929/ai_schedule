@@ -51,6 +51,25 @@ class WorkingMemory:
             return None
 
     @staticmethod
+    async def delete_key(session_id: str, key: str):
+        """删除工作记忆中的某个 key"""
+        try:
+            from common.redis_client import get_redis
+            redis = await get_redis()
+            rkey = f"working:mem:{session_id}"
+            data = await redis.get(rkey)
+            if data:
+                mem = json.loads(data) if isinstance(data, (str, bytes)) else {}
+                mem.pop(key, None)
+                if mem:
+                    mem["_updated"] = datetime.now().isoformat()
+                    await redis.setex(rkey, WORKING_TTL, json.dumps(mem, ensure_ascii=False))
+                else:
+                    await redis.delete(rkey)
+        except Exception as e:
+            logger.debug(f"Working memory delete_key failed: {e}")
+
+    @staticmethod
     async def clear(session_id: str):
         """清除工作记忆"""
         try:

@@ -15,33 +15,40 @@ from pydantic import BaseModel, Field
 from enum import Enum
 
 class Intent(str, Enum):
+    """统一意图 — CREATE_TODO 用于无具体时间的待办"""
     CREATE_EVENT = "create_event"
     CREATE_TODO = "create_todo"
-    CREATE_REMINDER = "create_reminder"
-    DELETE_EVENT = "delete_event"
     UPDATE_EVENT = "update_event"
+    DELETE_EVENT = "delete_event"
     QUERY_SCHEDULE = "query_schedule"
     QUERY_WEATHER = "query_weather"
-    ARRANGE_TRIP = "arrange_trip"
-    IMAGE_ANALYSIS = "image_analysis"
-    DETECT_CONFLICT = "detect_conflict"
     CHAT = "chat"
     UNKNOWN = "unknown"
 
 
 def normalize_intent(raw: str) -> Intent:
-    """统一意图名: create_task→create_event, query_calendar→query_schedule"""
+    """统一意图名映射"""
     mapping = {
-        "query_calendar": Intent.QUERY_SCHEDULE,
-        "query_event": Intent.QUERY_SCHEDULE,
+        # 旧名 → 新名
         "create_task": Intent.CREATE_EVENT,
+        "create_reminder": Intent.CREATE_EVENT,
         "delete_task": Intent.DELETE_EVENT,
         "update_task": Intent.UPDATE_EVENT,
-        "conflict_negotiation": Intent.DETECT_CONFLICT,
-        "casual_chat": Intent.CHAT,
+        # 查询
+        "query_calendar": Intent.QUERY_SCHEDULE,
+        "query_event": Intent.QUERY_SCHEDULE,
+        # 标准名
         "create_event": Intent.CREATE_EVENT,
         "create_todo": Intent.CREATE_TODO,
-        "create_reminder": Intent.CREATE_REMINDER,
+        "update_event": Intent.UPDATE_EVENT,
+        "delete_event": Intent.DELETE_EVENT,
+        "query_schedule": Intent.QUERY_SCHEDULE,
+        "query_weather": Intent.QUERY_WEATHER,
+        # 其他
+        "arrange_trip": Intent.CREATE_EVENT,
+        "conflict_negotiation": Intent.CREATE_EVENT,
+        "casual_chat": Intent.CHAT,
+        "chat": Intent.CHAT,
     }
     lower = raw.lower().strip()
     if lower in mapping:
@@ -93,6 +100,9 @@ class PlannerOutput(BaseModel):
     source: str = Field(default="mock")
     reason: str = Field(default="")
     need_confirmation: bool = Field(default=False)
+
+
+# schema 信息只在 planner 首次调用时打印 (避免模块导入时无条件输出)
 
 
 # ============================================================

@@ -16,6 +16,25 @@ from agent_service.utils.tracer import start_trace
 logger = logging.getLogger(__name__)
 
 
+async def _load_valid_pending_tasks(working: dict) -> list[dict]:
+    """过滤已提交/已过期的 PendingTask, 清理旧版本遗留的工作记忆。"""
+    pending_tasks = working.get("pending_tasks", []) or []
+    if not pending_tasks:
+        return []
+
+    try:
+        from agent_service.graph.pending_task import get_pending
+        valid = []
+        for task in pending_tasks:
+            ref_id = task.get("ref_id", "")
+            if not ref_id or await get_pending(ref_id):
+                valid.append(task)
+        return valid
+    except Exception as e:
+        logger.debug(f"Pending task validation skipped: {e}")
+        return pending_tasks
+
+
 async def _extract_and_save_memories(user_input: str, ai_reply: str, user_id: int):
     """Memory Manager: 对话结束后异步提取有价值信息"""
     try:
@@ -62,9 +81,50 @@ class AgentService:
             "error": None,
         }
 
+        # Load working memory
+        try:
+            from agent_service.memory.working import WorkingMemory
+            working = await WorkingMemory.get(session_id)
+            if working:
+                initial_state["active_flow"] = working.get("active_flow")
+                initial_state["pending_tasks"] = await _load_valid_pending_tasks(working)
+                conflict = working.get("conflict")
+                if conflict:
+                    initial_state["pending_action"] = conflict
+                    initial_state["active_flow"] = "conflict_resolution"
+        except Exception as e:
+            logger.debug(f"Redis load failed: {e}")
+
+        # Flush expired pending todos → PostgreSQL
+        try:
+            from agent_service.graph.pending_task import flush_expired_todos
+            await flush_expired_todos(request.user_id or 0)
+        except Exception as e:
+            logger.debug(f"Todo flush skipped: {e}")
+
         try:
             graph = get_agent_graph()
             final_state = await graph.ainvoke(initial_state)
+
+            # Sync working memory
+            try:
+                from agent_service.memory.working import WorkingMemory
+                flow = final_state.get("active_flow")
+                if flow == "conflict_resolution":
+                    await WorkingMemory.save(session_id, "active_flow", flow)
+                    conflict = final_state.get("pending_action")
+                    if conflict and conflict.get("type") == "conflict_resolution":
+                        await WorkingMemory.save(session_id, "conflict", conflict)
+                else:
+                    await WorkingMemory.delete_key(session_id, "active_flow")
+                    await WorkingMemory.delete_key(session_id, "conflict")
+                ptasks = final_state.get("pending_tasks", [])
+                if ptasks:
+                    await WorkingMemory.save(session_id, "pending_tasks", ptasks)
+                else:
+                    await WorkingMemory.delete_key(session_id, "pending_tasks")
+            except Exception as e:
+                logger.debug(f"Redis save failed: {e}")
 
             tracer.add_step("planner",
                 input_data={"user_input": request.message[:200]},
@@ -144,20 +204,27 @@ class AgentService:
                 from langchain_core.messages import SystemMessage
                 initial_state["messages"].append(SystemMessage(content=recent_summary))
 
-            # Load pending_action — add debug
+            # Load working memory (三层: active_flow / pending_tasks / conflict)
             import json as _json
             working = await WorkingMemory.get(session_id)
-            print(f"REDIS LOAD KEY: working:mem:{session_id}")
-            print(f"REDIS RAW VALUE: {_json.dumps(working, ensure_ascii=False)[:300] if working else 'None'}")
             if working:
-                if working.get("intent"):
-                    initial_state["intent"] = working.get("intent", "")
-                if working.get("pending_action"):
-                    initial_state["pending_action"] = working["pending_action"]
-                else:
-                    print("WARNING: working memory found but pending_action NOT in it")
+                print(f"[REDIS] load flow={working.get('active_flow')} ptasks={len(working.get('pending_tasks',[]))} conflict={'yes' if working.get('conflict') else 'no'}")
+            if working:
+                initial_state["active_flow"] = working.get("active_flow")
+                initial_state["pending_tasks"] = await _load_valid_pending_tasks(working)
+                conflict = working.get("conflict")
+                if conflict:
+                    initial_state["pending_action"] = conflict
+                    initial_state["active_flow"] = "conflict_resolution"
             else:
-                print("WARNING: no working memory for this session (new session?)")
+                print("No working memory (new session)")
+
+            # Flush expired pending todos → PostgreSQL
+            try:
+                from agent_service.graph.pending_task import flush_expired_todos
+                await flush_expired_todos(user_id)
+            except Exception as e:
+                logger.debug(f"Todo flush skipped: {e}")
 
             if should_summarize(initial_state["messages"]):
                 logger.info("Token threshold exceeded, running Summary Node...")
@@ -170,13 +237,36 @@ class AgentService:
             graph = get_agent_graph()
             final_state = await graph.ainvoke(initial_state)
 
-            await WorkingMemory.save(session_id, "intent", final_state.get("intent"))
-            await WorkingMemory.save(session_id, "actions", final_state.get("actions_taken", []))
-            if final_state.get("pending_action"):
-                await WorkingMemory.save(session_id, "pending_action", final_state["pending_action"])
-                print(f"REDIS SAVE KEY: working:mem:{session_id}")
-                import json as _json2
-                print("SAVE STATE: pending_action=", _json2.dumps(final_state["pending_action"], ensure_ascii=False)[:300])
+            # Sync working memory (pause/resume 支持)
+            flow = final_state.get("active_flow")
+            flow_paused = final_state.get("_flow_paused")
+
+            if flow_paused:
+                # Interrupt: 保留暂停的 conflict, 等下次恢复
+                paused = final_state.get("_paused_pending")
+                if paused:
+                    await WorkingMemory.save(session_id, "active_flow", "conflict_resolution")
+                    await WorkingMemory.save(session_id, "conflict", paused)
+                # 追加 interrupt 完成提示
+                reply = final_state.get("final_reply", "")
+                if paused and paused.get("summary"):
+                    reply += f"\n\n💡 刚才还有一个冲突需要你选择：\n{paused.get('summary', '')}"
+                    final_state["final_reply"] = reply
+            elif flow == "conflict_resolution":
+                await WorkingMemory.save(session_id, "active_flow", flow)
+                conflict = final_state.get("pending_action")
+                if conflict and conflict.get("type") == "conflict_resolution":
+                    await WorkingMemory.save(session_id, "conflict", conflict)
+            else:
+                await WorkingMemory.delete_key(session_id, "active_flow")
+                await WorkingMemory.delete_key(session_id, "conflict")
+            ptasks = final_state.get("pending_tasks", [])
+            if ptasks:
+                await WorkingMemory.save(session_id, "pending_tasks", ptasks)
+            else:
+                await WorkingMemory.delete_key(session_id, "pending_tasks")
+            pa = final_state.get("pending_action", {})
+            print(f"[REDIS] save flow={flow} stage={pa.get('stage','')}")
 
             # Trace
             tracer.add_step("planner",

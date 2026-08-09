@@ -83,40 +83,75 @@ D:/AIagent日程规划/
 ### 3.2 Agent 工作流
 
 ```
-用户输入 → Memory Load (画像+摘要) → Token Check
+用户输入 → Memory Load (画像+摘要) → Todo Flush (Redis→PG)
     │
     ▼
-Planner Node        ChatPromptTemplate → Pydantic(PlannerOutput)
-  │ (LLM优先, 失败→Event Detector→UNKNOWN, 不伪装)
-  │ 去关键词: 有未来时间+事件名→create_task
-  │ 置信度: source=llm/mock, confidence=0.0~1.0
+Input Classifier    规则优先, 零 LLM (weather > mutation > query > event_detector)
     │
-    ▼
-Validator Node      检查 intent/sub_tasks/title/time/confidence
-  │ 缺字段→从输入提取事件名补全
-  │ 低置信度(<0.6)→要求确认
+    ├─ weather ────────────────► Tools Executor → Reply
+    ├─ mutation (增删改) ──────► Tools Executor → Reply
+    ├─ query ──────────────────► Tools Executor → Reply
     │
-    ├─ 通过 ──────────────────────┐
-    │                             │
-    ▼                             ▼
-Tools Executor              Reply Node
-  Tool Call Limit(5)          (确认消息/
-  Tool Retry(指数退避)          拒绝回复)
-    │
-    ▼
-Conflict Check
-    │
-    ▼
-Coordinator Node
-    │
-    ▼
-Reply Node           ChatPromptTemplate → SSE流式
-    │
-    ▼
-Memory Manager       Extract→Save(PG)
-    │
-    ▼
-LangSmith Trace      飞行记录仪
+    └─ 非以上 ──────► Event Detector (规则引擎)
+                        │
+                        ├─ POINT 时间+事件 ──► create_event → Tools Executor
+                        ├─ RANGE 时间+事件 ──► create_todo  → Tools Executor (Redis)
+                        ├─ 无时间+事件 ──────► create_todo  → Tools Executor (Redis)
+                        ├─ 天气关键词 ───────► query_weather → Tools Executor
+                        │
+                        └─ 无法判断 ────────► Planner Node (LLM)
+                                                │
+                                                ▼
+                                          Validator Node
+                                                │
+                                    ┌───────────┴───────────┐
+                                    ▼                       ▼
+                              Tools Executor          Reply Node
+                                Tool Call Limit(5)
+                                Tool Retry(指数退避)
+                                    │
+                                    ▼
+                              Pending Conflict Detector
+                              (RANGE→软提示 / POINT→冲突检测)
+                                    │
+                                    ▼
+                              Coordinator Node → Reply Node
+                                    │
+                                    ▼
+                              Memory Manager → LangSmith Trace
+```
+
+### 3.2.1 Event vs Todo 区分
+
+```
+Event (日程)                      Todo (待办)
+├─ POINT 时间 (明天下午3点)       ├─ RANGE 时间 (明天)
+├─ 直接创建 Task (PostgreSQL)     ├─ 无时间 (开会)
+├─ 冲突检测                        ├─ Redis 暂存 (TTL=300s)
+└─                               └─ 5min 无后续 → flush 到 PG todo_queue
+```
+
+### 3.2.2 PendingTask & PendingTodo 生命周期
+
+```
+PendingTask (日程冲突暂存)        PendingTodo (待办暂存)
+Redis: pending:task:{ref_id}      Redis: todo:pending:{ref_id}
+TTL: 1800s (30min)                TTL: 300s (5min)
+                                  │
+冲突解决 → commit_pending → PG    每次对话前 flush_expired_todos()
+                                  │
+                                  超过5min → commit_todo_to_db() → PG todo_queue
+```
+
+### 3.2.3 Weather Parser (3 层, 零 LLM)
+
+```
+用户输入
+  │
+  ▼ Step 1: _clean_time_noise()    清洗时间词+数字日期
+  ▼ Step 2: _resolve_weather_date() 日期解析 (MM-DD/星期/相对日/跨年)
+  ▼ Step 3: _extract_weather_city() 城市提取 (从清洗后文本)
+  ▼ Step 4: _extract_weather_period() 时段 (上午/下午/晚上)
 ```
 
 ### 3.3 Agent 分层规则
@@ -151,8 +186,14 @@ Middleware = 拦截 (ToolCallLimit/Retry/Summarize)
 | 能力 | 实现 |
 |------|------|
 | 自然语言 → 结构化输出 | PlannerOutput (Pydantic) |
+| Event vs Todo 区分 | POINT→日程, RANGE/无时间→待办(Redis→PG) |
+| 天气查询 (3层解析) | 时间清洗→日期解析→城市提取, 零 LLM |
+| 输入预分类 | Input Classifier (weather/mutation/query/event, 零 LLM) |
+| Event Detector | 规则引擎优先, 高置信度事件跳过 Planner |
 | 工具调用 + 限流 | ToolCallLimiter (max 5) + Retry |
 | 冲突检测 + 协调 | ConflictDetector + Coordinator Node |
+| PendingTask 暂存 | Redis → 冲突解决 → PostgreSQL |
+| PendingTodo 暂存 | Redis (5min TTL) → flush → PostgreSQL todo_queue |
 | 流式 SSE 输出 | stream_reply() → EventSource |
 | 结构化记忆 | 3层 (Working/Short/Long) + Summary Node |
 | AI Trace | LangSmith + 本地 Tracer |

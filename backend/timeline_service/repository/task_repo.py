@@ -20,6 +20,16 @@ class TaskRepository:
         )
         return result.scalar_one_or_none()
 
+    async def find_latest_by_user_title(self, user_id: int, title: str) -> TaskModel | None:
+        """Find the most recently scheduled task with an exact title."""
+        result = await self.db.execute(
+            select(TaskModel)
+            .where(TaskModel.user_id == user_id, TaskModel.title == title)
+            .order_by(TaskModel.start_time.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def find_by_user_time_range(
         self, user_id: int, start: datetime, end: datetime
     ) -> list[TaskModel]:

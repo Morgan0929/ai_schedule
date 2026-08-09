@@ -1,37 +1,69 @@
-"""
-公共配置管理
+"""Shared application configuration."""
 
-使用 pydantic-settings 加载环境变量，
-支持 .env 文件和直接环境变量覆盖
-"""
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = BACKEND_DIR.parent
+
+
 class Settings(BaseSettings):
-    """全局配置，自动从 .env / 环境变量加载"""
+    """Load one deterministic configuration for every backend service."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Services may be started from any working directory. The project
+        # root is the single source of truth for local configuration.
+        env_file=PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
-        extra="ignore",  # 忽略 .env 中多余字段（如 DATABASE_URL）
+        extra="ignore",
     )
 
-    # ============ 环境 ============
     ENV: str = "dev"
     LOG_LEVEL: str = "INFO"
-    USE_SQLITE: bool = True  # 开发时无需 Docker，用 SQLite；上线改为 False
+    USE_SQLITE: bool = False
 
-    # ============ 数据库 ============
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "ai_schedule_agent"
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "postgres123"
+    DATABASE_URL: str | None = None
+
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: str = ""
+    REDIS_DB: int = 0
+
+    QDRANT_HOST: str = "localhost"
+    QDRANT_PORT: int = 6333
+    QDRANT_API_KEY: str = ""
+
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
+    DEEPSEEK_MODEL: str = "deepseek-chat"
+
+    LANGCHAIN_API_KEY: str = ""
+    LANGCHAIN_TRACING_V2: bool = False
+    LANGCHAIN_PROJECT: str = "lin-ai-secretary"
+
+    APP_SERVICE_PORT: int = 8000
+    CRAWLER_SERVICE_PORT: int = 8001
+    AGENT_SERVICE_PORT: int = 8002
+    TIMELINE_SERVICE_PORT: int = 8003
+    RAG_SERVICE_PORT: int = 8004
+
+    JWT_SECRET_KEY: str = "change-me-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 1440
 
     @property
     def database_url(self) -> str:
-        """生成 SQLAlchemy async 连接字符串"""
+        """Return the async SQLAlchemy URL used by the application."""
+        if self.DATABASE_URL:
+            return self.DATABASE_URL
         return (
             f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
@@ -39,17 +71,13 @@ class Settings(BaseSettings):
 
     @property
     def database_url_sync(self) -> str:
-        """生成 SQLAlchemy sync 连接字符串（Alembic 迁移用）"""
+        """Return the synchronous URL used by migration tooling."""
+        if self.DATABASE_URL:
+            return self.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://", 1)
         return (
             f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
-
-    # ============ Redis ============
-    REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 6379
-    REDIS_PASSWORD: str = ""
-    REDIS_DB: int = 0
 
     @property
     def redis_url(self) -> str:
@@ -57,33 +85,5 @@ class Settings(BaseSettings):
             return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
-    # ============ Qdrant ============
-    QDRANT_HOST: str = "localhost"
-    QDRANT_PORT: int = 6333
-    QDRANT_API_KEY: str = ""
 
-    # ============ DeepSeek ============
-    DEEPSEEK_API_KEY: str = ""
-    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
-    DEEPSEEK_MODEL: str = "deepseek-chat"
-
-    # ============ LangSmith ============
-    LANGCHAIN_API_KEY: str = ""
-    LANGCHAIN_TRACING_V2: bool = False
-    LANGCHAIN_PROJECT: str = "lin-ai-secretary"
-
-    # ============ 服务端口 ============
-    APP_SERVICE_PORT: int = 8000
-    CRAWLER_SERVICE_PORT: int = 8001
-    AGENT_SERVICE_PORT: int = 8002
-    TIMELINE_SERVICE_PORT: int = 8003
-    RAG_SERVICE_PORT: int = 8004
-
-    # ============ JWT ============
-    JWT_SECRET_KEY: str = "change-me-in-production"
-    JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_MINUTES: int = 1440
-
-
-# 全局单例
 settings = Settings()

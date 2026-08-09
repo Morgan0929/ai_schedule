@@ -24,6 +24,7 @@ logger = logging.getLogger("ai_trace")
 
 # 是否同时输出到控制台
 CONSOLE_TRACE = True
+TRACE_COMPACT = True
 
 
 # ============ LangSmith 飞行记录仪 ============
@@ -97,10 +98,7 @@ class AgentTracer:
         self.start_time = time.time()
 
         if CONSOLE_TRACE:
-            print(f"\n{'='*60}")
-            print(f"[Trace:{self.trace_id}] 会话开始 — user={user_id}")
-            print(f"[Trace:{self.trace_id}] 用户输入: {user_input[:200]}")
-            print(f"{'='*60}")
+            print(f"[Trace:{self.trace_id}] start u={user_id} in={user_input[:40]}")
 
     def add_step(self, step_name: str, input_data: dict = None,
                  output_data: dict = None, success: bool = True,
@@ -117,14 +115,14 @@ class AgentTracer:
         self.steps.append(step)
 
         if CONSOLE_TRACE:
-            status = "OK" if success else "FAIL"
-            icon = {"planner": "[Plan]", "tools": "[Tool]", "conflict": "[Conflict]",
-                    "coordinator": "[Coord]", "reply": "[Reply]"}.get(step_name, "[Step]")
-            print(f"[Trace:{self.trace_id}] {icon} {step_name:12s} [{status}] "
-                  f"{step.duration_ms:.0f}ms")
-            if output_data:
-                brief = json.dumps(output_data, ensure_ascii=False)[:150]
-                print(f"    → {brief}")
+            icon = {"planner": "P", "tools": "T", "conflict": "C",
+                    "coordinator": "O", "reply": "R"}.get(step_name, "?")
+            ok = "✓" if success else "✗"
+            extra = ""
+            if output_data and not TRACE_COMPACT:
+                brief = json.dumps(output_data, ensure_ascii=False)[:80]
+                extra = f" | {brief}"
+            print(f"[Trace:{self.trace_id}] {icon}:{step_name} {step.duration_ms:.0f}ms {ok}{extra}")
 
     def finish(self, final_reply: str):
         """标记追踪完成"""
@@ -143,11 +141,8 @@ class AgentTracer:
         }
 
         if CONSOLE_TRACE:
-            print(f"{'='*60}")
-            print(f"[Trace:{self.trace_id}] 会话结束 — {len(self.steps)}步 "
-                  f"耗时{total_ms:.0f}ms "
-                  f"{'OK' if summary['success'] else 'FAIL'}")
-            print(f"{'='*60}\n")
+            ok = 'ok' if summary['success'] else 'err'
+            print(f"[Trace:{self.trace_id}] end steps={len(self.steps)} ms={total_ms:.0f} {ok}")
 
         # 异步存入数据库 + LangSmith 飞行记录仪（不阻塞回复）
         import asyncio
@@ -170,18 +165,24 @@ class AgentTracer:
             async with async_session_factory() as db:
                 await db.execute(text("""
                     INSERT INTO agent_session (id, user_id, title, messages, agent_state, is_active)
-                    VALUES (:id, :user_id, :title, :messages::jsonb, :state::jsonb, true)
+                    VALUES (:id, :user_id, :title, CAST(:messages AS JSONB), CAST(:state AS JSONB), true)
                     ON CONFLICT (id) DO UPDATE SET
-                        messages = agent_session.messages || :append_msg::jsonb,
-                        agent_state = :state::jsonb,
+                        messages = agent_session.messages || CAST(:append_msg AS JSONB),
+                        agent_state = CAST(:state AS JSONB),
                         updated_at = CURRENT_TIMESTAMP
                 """), {
                     "id": uuid.UUID(self.session_id) if len(self.session_id) == 36 else uuid.uuid4(),
                     "user_id": self.user_id,
                     "title": self.user_input[:100],
-                    "messages": [{"role": "user", "content": self.user_input}],
-                    "append_msg": [{"role": "assistant", "content": summary["final_reply"][:500]}],
-                    "state": summary,
+                    "messages": json.dumps(
+                        [{"role": "user", "content": self.user_input}],
+                        ensure_ascii=False,
+                    ),
+                    "append_msg": json.dumps(
+                        [{"role": "assistant", "content": summary["final_reply"][:500]}],
+                        ensure_ascii=False,
+                    ),
+                    "state": json.dumps(summary, ensure_ascii=False, default=str),
                 })
                 await db.commit()
                 logger.info(f"Trace {self.trace_id} persisted to PostgreSQL")

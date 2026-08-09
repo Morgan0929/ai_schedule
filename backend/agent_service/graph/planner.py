@@ -1,5 +1,10 @@
 """
-Planner Node — 意图识别 (唯一出口: normalize_planner_result)
+Planner Node — LLM 意图识别
+
+前置: event_detector 已运行, 规则引擎无法判断的才到这里
+       pending_action 已在 graph 路由层拦截, 永不进入 planner
+
+唯一出口: normalize_planner_result
 """
 from datetime import date, datetime
 from typing import Any
@@ -7,8 +12,6 @@ from agent_service.graph.state import AgentState
 from agent_service.graph.schemas import PlannerOutput, Intent, normalize_intent
 from agent_service.llm.deepseek_client import is_llm_available, get_structured_llm
 from agent_service.llm.prompts import planner_prompt
-
-CONFIDENCE_THRESHOLD = 0.8
 
 
 def normalize_planner_result(
@@ -52,58 +55,26 @@ def normalize_planner_result(
         "needs_confirmation": needs_confirmation,
         **extra,
     }
-    import json
-    print(f"PLANNER RETURN [intent={intent_str}] [source={result['_source']}]",
-          json.dumps(result, ensure_ascii=False, default=str)[:500])
+    print(f"[PLANNER] intent={intent_str} src={result['_source']} tasks={len(result.get('sub_tasks',[]))}")
     return result
 
 
 async def planner_node(state: AgentState) -> dict[str, Any]:
+    """
+    Planner Node — LLM 深度分析
+    """
+    # (3) 首次调用时打印 schema (仅一次)
+    if not hasattr(planner_node, '_schema_printed'):
+        from agent_service.graph.schemas import PlannerOutput, Intent
+        print(f"[PLANNER] schema — intents={[e.value for e in Intent]} fields={list(PlannerOutput.model_fields.keys())}")
+        planner_node._schema_printed = True
+
     user_input = state["user_input"]
-    pending = state.get("pending_action", {})
 
-    # ① 纯B/C → 不归这里, graph already routes to conflict_resolver
+    # ═══ 只有一条路径: LLM → fallback to chat ═══
+    # event_detector 已处理了规则能处理的所有情况
+    # 这里只做 LLM 深度分析和最终的 chat fallback
 
-    # ② 有pending但复杂修改: "B方案 挪到晚上11点" → 提取时间+标记选择
-    if pending.get("type") == "conflict_resolution":
-        selected = None
-        for plan_id in ("A", "B", "C"):
-            if plan_id in user_input.upper():
-                selected = plan_id
-                break
-        if selected:
-            # 提取用户指定的新时间
-            from agent_service.llm.mock_agent import _extract_hour
-            h = _extract_hour(user_input)
-            new_time = None
-            if h is not None:
-                from datetime import timedelta
-                d = date.today() + timedelta(days=1) if h < 12 else timedelta(days=0)
-                d = date.today() + d
-                new_time = f"{d.isoformat()}T{h:02d}:00:00"
-
-            opt = pending["options"].get(selected, {})
-            return normalize_planner_result(
-                "update_event",
-                [{"action": "update_task", "params": {
-                    "title": opt.get("new_task", opt.get("existing_task", "")),
-                    "start_time": new_time or "",
-                    "hint": user_input,
-                }}],
-                source="conflict_modifier",
-                pending_action={
-                    "type": "conflict_resolution",
-                    "stage": "waiting_confirm",
-                    "selected_plan": selected,
-                    "proposed_actions": [{
-                        "action": "update_task",
-                        "target": opt.get("new_task", opt.get("existing_task", "")),
-                        "new_time": new_time or "need_clarify",
-                    }],
-                },
-            )
-
-    # ③ LLM
     if is_llm_available():
         result = await _llm_plan(user_input)
         if result and str(result.intent) not in ("unknown", "chat"):
@@ -114,21 +85,7 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
                 **r,
             )
 
-    # ③ Event Detector
-    event_result = _detect_event_statement(user_input)
-    if event_result["confidence"] >= CONFIDENCE_THRESHOLD:
-        return normalize_planner_result(
-            event_result.pop("intent"), event_result.pop("sub_tasks", []),
-            confidence=event_result.pop("confidence", 0),
-            source=event_result.pop("source", "event_detector"),
-            **event_result,
-        )
-
-    # ④ Low confidence
-    if event_result.get("confidence", 0) > 0:
-        return normalize_planner_result("unknown", [], source="event_detector", needs_confirmation=True)
-
-    # ⑤ Fallback
+    # LLM 无法判断 → chat
     return normalize_planner_result("chat", [], source="fallback")
 
 
@@ -139,88 +96,18 @@ async def _llm_plan(user_input: str) -> PlannerOutput | None:
     try:
         llm = get_structured_llm(PlannerOutput)
         result = await llm.ainvoke(prompt_value)
+        # (1) LLM 结构化输出成功
         if isinstance(result, PlannerOutput):
             result.source = "llm"
             if not result.confidence:
                 result.confidence = 0.85
             result.intent = normalize_intent(result.intent.value if hasattr(result.intent, 'value') else str(result.intent))
             return result
-    except Exception:
-        pass
+    except Exception as e:
+        # (2) structured output 异常
+        import traceback
+        print(f"[PLANNER] ERROR {type(e).__name__}: {e}\n{traceback.format_exc()[-300:]}")
     return None
-
-
-def _detect_event_statement(text: str) -> dict[str, Any]:
-    """事件陈述检测"""
-    from agent_service.llm.mock_agent import _extract_time, _extract_hour
-    from datetime import date as date_type
-
-    time_info = _extract_time(text)
-    h = _extract_hour(text)
-
-    has_time = h is not None or "T" in time_info.get("start", "")
-    if not has_time:
-        try:
-            parsed_date = date_type.fromisoformat(time_info.get("start", ""))
-            has_time = parsed_date > date_type.today()
-        except (ValueError, TypeError):
-            pass
-
-    time_words = ["明天", "后天", "下周", "这周", "今天", "上午", "下午", "晚上",
-                  "周一", "周二", "周三", "周四", "周五", "周六", "周日",
-                  "下个月", "下周三", "下周一", "下周二", "下周四", "下周五",
-                  "1点", "2点", "3点", "4点", "5点", "6点", "7点", "8点",
-                  "9点", "10点", "11点", "12点",
-                  "半", "点半", "1点半", "2点半", "3点半", "4点半", "5点半",
-                  "6点半", "7点半", "8点半", "9点半", "10点半", "11点半", "12点半",
-                  "提醒我", "帮我", "帮我安排", "提醒"]
-    event_title = text
-    for w in time_words:
-        event_title = event_title.replace(w, "")
-    event_title = event_title.strip().strip("，,。.；;：:！!？? ")
-    for prefix in ["我要去", "我要", "我想去", "我想", "帮我", "记一下", "提醒我", "安排"]:
-        if event_title.startswith(prefix):
-            event_title = event_title[len(prefix):]
-            break
-
-    question_words = ["什么", "怎么", "吗", "呢", "如何", "有没有", "查看", "查询",
-                      "啥", "谁", "哪里", "干嘛", "干啥", "有什么事", "有什么安排"]
-    is_query = any(qw in text for qw in question_words) or "?" in text or "？" in text
-    has_event = len(event_title) >= 2 and not is_query
-
-    entities = {"title": event_title}
-    if h:
-        d = date.today()
-        if "明天" in text: d += __import__('datetime').timedelta(days=1)
-        elif "后天" in text: d += __import__('datetime').timedelta(days=2)
-        entities["start_time"] = f"{d.isoformat()}T{h:02d}:00:00"
-        entities["end_time"] = f"{d.isoformat()}T{h + 1:02d}:00:00"
-    else:
-        # 只传start_time/end_time, 不传start/end
-        s = time_info.get("start", "")
-        e = time_info.get("end", s)
-        entities["start_time"] = s if s else date.today().isoformat()
-        entities["end_time"] = e if e != s else entities["start_time"]
-
-    if has_time and has_event:
-        return {"intent": "create_event", "sub_tasks": [
-            {"action": "check_calendar", "params": entities},
-            {"action": "create_task", "params": entities},
-        ], "confidence": 0.85, "source": "event_detector"}
-
-    if has_time and not has_event:
-        # query: 转成完整时间范围
-        start_str = time_info.get("start", date.today().isoformat())
-        end_str = time_info.get("end", start_str)
-        query_params = {
-            "start_time": f"{start_str}T00:00:00" if "T" not in start_str else start_str,
-            "end_time": f"{end_str}T23:59:59" if "T" not in end_str else end_str,
-        }
-        return {"intent": "query_schedule", "sub_tasks": [
-            {"action": "check_calendar", "params": query_params},
-        ], "confidence": 0.7, "source": "event_detector"}
-
-    return {"intent": "chat", "sub_tasks": [], "confidence": 0.0, "source": "event_detector"}
 
 
 def _planner_output_to_state(result: PlannerOutput) -> dict[str, Any]:
@@ -231,21 +118,17 @@ def _planner_output_to_state(result: PlannerOutput) -> dict[str, Any]:
     entities = result.entities or {}
 
     intent_to_action = {
-        Intent.CREATE_EVENT: "create_task",
-        Intent.CREATE_TODO: "create_task",
-        Intent.CREATE_REMINDER: "create_task",
+        Intent.CREATE_EVENT: "create_pending",
         Intent.DELETE_EVENT: "delete_task",
         Intent.UPDATE_EVENT: "update_task",
         Intent.QUERY_SCHEDULE: "check_calendar",
         Intent.QUERY_WEATHER: "query_weather",
-        Intent.ARRANGE_TRIP: "create_task",
     }
     action = intent_to_action.get(intent)
     if action:
         sub_tasks.append({"action": action, "params": entities.copy()})
 
-    if intent in (Intent.CREATE_EVENT, Intent.CREATE_TODO, Intent.CREATE_REMINDER,
-                  Intent.UPDATE_EVENT, Intent.ARRANGE_TRIP):
+    if intent in (Intent.CREATE_EVENT, Intent.UPDATE_EVENT):
         sub_tasks.insert(0, {"action": "check_calendar", "params": entities})
 
     return {
