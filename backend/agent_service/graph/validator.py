@@ -36,7 +36,13 @@ async def validator_node(state: dict) -> dict[str, Any]:
             "_issues": ["intent_invalid", f"got={intent!r} type={type(intent).__name__}"],
         }; _vlog("AFTER VALIDATOR", r); return r
 
-    # 2. sub_tasks 不空
+    # 2. chat/unknown 不需要工具执行步骤
+    if intent in {"chat", "unknown"}:
+        r = {"needs_confirmation": False, "_issues": [], "_validated": True}
+        _vlog("AFTER VALIDATOR", r)
+        return r
+
+    # 3. 可执行意图必须有 sub_tasks
     if not sub_tasks:
         r = {
             "needs_confirmation": True,

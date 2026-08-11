@@ -426,6 +426,12 @@ def _extract_query_label(text: str, time_range: dict | None = None) -> str:
     return "该时间"
 
 
+def _is_greeting(text: str) -> bool:
+    """Recognize short greetings that should not be treated as out-of-scope requests."""
+    normalized = (text or "").strip().lower().strip("，,。.！!？?～~ ")
+    return normalized in {"你好", "您好", "嗨", "哈喽", "hello", "hi", "在吗"}
+
+
 async def reply_node(state: AgentState) -> dict[str, Any]:
     """
     回复生成节点
@@ -457,6 +463,9 @@ async def reply_node(state: AgentState) -> dict[str, Any]:
     external_data = state.get("external_data", {})
 
     # ═══ intent 分流 ═══
+    if intent == "chat" and _is_greeting(user_input):
+        return {"final_reply": "你好，我是林。"}
+
     if intent == "create_todo":
         if actions:
             return {"final_reply": "\n".join(f"  • {a}" for a in actions)}
