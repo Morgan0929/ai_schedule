@@ -45,6 +45,7 @@ class AgentState(TypedDict, total=False):
 
     # Validator
     needs_confirmation: bool
+    confirmation_stage: str
     _confirm_message: str
     _issues: list[str]
     _confidence: float

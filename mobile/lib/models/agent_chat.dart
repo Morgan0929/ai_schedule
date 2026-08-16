@@ -39,6 +39,8 @@ class AgentChatResponse {
   const AgentChatResponse({
     required this.reply,
     required this.sessionId,
+    this.needsConfirmation = false,
+    this.confirmationStage = '',
     this.conflicts = const [],
     this.suggestions = const [],
     this.tasksCreated = const [],
@@ -48,6 +50,8 @@ class AgentChatResponse {
 
   final String reply;
   final String sessionId;
+  final bool needsConfirmation;
+  final String confirmationStage;
   final List<Map<String, dynamic>> conflicts;
   final List<AgentSuggestion> suggestions;
   final List<int> tasksCreated;
@@ -58,6 +62,8 @@ class AgentChatResponse {
     return AgentChatResponse(
       reply: json['reply']?.toString() ?? '',
       sessionId: json['session_id']?.toString() ?? '',
+      needsConfirmation: json['needs_confirmation'] == true,
+      confirmationStage: json['confirmation_stage']?.toString() ?? '',
       conflicts: (json['conflicts'] as List<dynamic>? ?? const [])
           .whereType<Map<String, dynamic>>()
           .toList(),

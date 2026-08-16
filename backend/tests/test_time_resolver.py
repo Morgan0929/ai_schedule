@@ -3,8 +3,11 @@ Time Resolver 测试 — 自然语言时间 → 标准时间范围
 基准日期: 2026-08-06 (周四)
 """
 import sys
-sys.path.insert(0, '.')
 from datetime import date
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from agent_service.services.time_resolver import resolve_time_range
 
 TODAY = date(2026, 8, 6)  # Thursday
@@ -37,6 +40,9 @@ CASES = [
 
     # === month ===
     ("下个月", "RANGE", "2026-09-01T00:00:00", "2026-09-01T23:59:59"),
+    ("月底31号", "RANGE", "2026-08-31T00:00:00", "2026-08-31T23:59:59"),
+    ("31号", "RANGE", "2026-08-31T00:00:00", "2026-08-31T23:59:59"),
+    ("8月31号", "RANGE", "2026-08-31T00:00:00", "2026-08-31T23:59:59"),
 
     # === POINT times ===
     ("明天下午三点", "POINT", "2026-08-07T15:00:00", "2026-08-07T16:00:00"),

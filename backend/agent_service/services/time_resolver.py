@@ -62,6 +62,33 @@ def _resolve_date(text: str, today: date) -> date:
     if '今天' in text:
         return today
 
+    # 支持“月底31号”、“8月31号”以及裸“31号”这类表达。
+    numeric_date = re.search(r'(月底)?(?:(\d{1,2})\s*月\s*)?(\d{1,2})\s*[号日]', text)
+    if numeric_date:
+        has_month = bool(numeric_date.group(2))
+        month = int(numeric_date.group(2) or today.month)
+        day = int(numeric_date.group(3))
+        last_day = calendar.monthrange(today.year, month)[1]
+        if day > last_day:
+            day = last_day if numeric_date.group(1) else day
+
+        try:
+            target = date(today.year, month, day)
+        except ValueError:
+            if not has_month:
+                next_month = today.replace(day=1) + timedelta(days=32)
+                next_last_day = calendar.monthrange(next_month.year, next_month.month)[1]
+                return date(next_month.year, next_month.month, min(int(numeric_date.group(3)), next_last_day))
+            return today
+
+        if has_month and target < today:
+            return date(today.year + 1, month, min(day, last_day))
+        if not has_month and '月底' not in text and target < today:
+            next_month = today.replace(day=1) + timedelta(days=32)
+            next_last_day = calendar.monthrange(next_month.year, next_month.month)[1]
+            return date(next_month.year, next_month.month, min(day, next_last_day))
+        return target
+
     if '月底' in text:
         last_day = calendar.monthrange(today.year, today.month)[1]
         return today.replace(day=last_day)
@@ -182,7 +209,7 @@ def resolve_time_range(text: str, now: date = None) -> dict:
         }
 
     # RANGE: 有日期无时段
-    if any(kw in text for kw in ['明天', '后天', '今天', '周', '下周', '这周', '下个月', '月底']):
+    if any(kw in text for kw in ['明天', '后天', '今天', '周', '下周', '这周', '下个月', '月底']) or re.search(r'(?:\d{1,2}\s*月\s*)?\d{1,2}\s*[号日]', text):
         return {
             "type": "RANGE",
             "time_range": {

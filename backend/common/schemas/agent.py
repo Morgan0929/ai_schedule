@@ -28,6 +28,8 @@ class AgentChatResponse(BaseModel):
     """Agent 对话响应"""
     reply: str = Field(..., description="AI 回复")
     session_id: str = Field(..., description="会话 ID")
+    needs_confirmation: bool = Field(default=False, description="是否处于可直接确认执行的阶段")
+    confirmation_stage: str = Field(default="", description="确认/冲突流程阶段，例如 waiting_choice 或 waiting_confirm")
     conflicts: list[dict] = Field(default_factory=list, description="检测到的冲突列表")
     suggestions: list[AgentSuggestion] = Field(default_factory=list, description="建议方案")
     tasks_created: list[int] = Field(default_factory=list, description="新创建的任务 ID 列表")
