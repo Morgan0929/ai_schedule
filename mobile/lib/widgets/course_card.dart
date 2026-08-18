@@ -1,28 +1,25 @@
 import 'package:flutter/material.dart';
 
-import '../models/task_item.dart';
+import '../models/course_item.dart';
 
-class TaskCard extends StatelessWidget {
-  const TaskCard({
-    required this.task,
+class CourseCard extends StatelessWidget {
+  const CourseCard({
+    required this.course,
     this.mediaBaseUrl,
     this.onEdit,
     this.onUploadImage,
-    this.onComplete,
     this.onDelete,
     super.key,
   });
 
-  final TaskItem task;
+  final CourseItem course;
   final String? mediaBaseUrl;
   final VoidCallback? onEdit;
   final VoidCallback? onUploadImage;
-  final VoidCallback? onComplete;
   final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
-    final color = _priorityColor(context, task.priority);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -33,7 +30,7 @@ class TaskCard extends StatelessWidget {
               width: 4,
               height: 56,
               decoration: BoxDecoration(
-                color: color,
+                color: const Color(0xFFB45F35),
                 borderRadius: BorderRadius.circular(4),
               ),
             ),
@@ -43,71 +40,74 @@ class TaskCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    task.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                    course.courseName,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.w700,
-                          decoration: task.status == TaskStatus.completed
-                              ? TextDecoration.lineThrough
-                              : null,
                         ),
                   ),
                   const SizedBox(height: 6),
                   Wrap(
-                    runSpacing: 6,
                     spacing: 10,
+                    runSpacing: 6,
                     children: [
-                      _Meta(icon: Icons.schedule, text: task.timeLabel),
-                      if (task.location != null && task.location!.isNotEmpty)
-                        _Meta(icon: Icons.place_outlined, text: task.location!),
+                      _Meta(icon: Icons.schedule, text: course.timeLabel),
+                      if (course.location != null &&
+                          course.location!.isNotEmpty)
+                        _Meta(
+                            icon: Icons.place_outlined, text: course.location!),
+                      if (course.teacher != null && course.teacher!.isNotEmpty)
+                        _Meta(
+                            icon: Icons.person_outline, text: course.teacher!),
                     ],
                   ),
-                  if (task.description != null &&
-                      task.description!.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      task.description!,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                  ],
                 ],
               ),
             ),
-            if (task.attachments.isNotEmpty) ...[
+            if (course.attachments.isNotEmpty) ...[
               _AttachmentPreview(
-                attachment: task.attachments.first,
+                attachment: course.attachments.first,
                 mediaBaseUrl: mediaBaseUrl,
               ),
               const SizedBox(width: 6),
             ],
-            PopupMenuButton<String>(
-              tooltip: '任务操作',
+            PopupMenuButton<_CourseAction>(
+              tooltip: '课程操作',
+              icon: const Icon(Icons.more_vert),
               onSelected: (value) {
-                if (value == 'edit') {
-                  onEdit?.call();
-                }
-                if (value == 'upload') {
-                  onUploadImage?.call();
-                }
-                if (value == 'complete') {
-                  onComplete?.call();
-                }
-                if (value == 'delete') {
-                  onDelete?.call();
+                switch (value) {
+                  case _CourseAction.edit:
+                    onEdit?.call();
+                    break;
+                  case _CourseAction.upload:
+                    onUploadImage?.call();
+                    break;
+                  case _CourseAction.delete:
+                    onDelete?.call();
+                    break;
                 }
               },
-              itemBuilder: (context) => [
-                const PopupMenuItem(value: 'edit', child: Text('编辑')),
-                const PopupMenuItem(value: 'upload', child: Text('上传图片')),
-                if (task.status != TaskStatus.completed)
-                  const PopupMenuItem(
-                    value: 'complete',
-                    child: Text('标记完成'),
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: _CourseAction.edit,
+                  child: ListTile(
+                    leading: Icon(Icons.edit_outlined),
+                    title: Text('编辑'),
                   ),
-                const PopupMenuItem(value: 'delete', child: Text('删除')),
+                ),
+                PopupMenuItem(
+                  value: _CourseAction.upload,
+                  child: ListTile(
+                    leading: Icon(Icons.image_outlined),
+                    title: Text('上传图片'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: _CourseAction.delete,
+                  child: ListTile(
+                    leading: Icon(Icons.delete_outline),
+                    title: Text('删除'),
+                  ),
+                ),
               ],
             ),
           ],
@@ -115,23 +115,14 @@ class TaskCard extends StatelessWidget {
       ),
     );
   }
-
-  Color _priorityColor(BuildContext context, TaskPriority priority) {
-    switch (priority) {
-      case TaskPriority.high:
-        return Theme.of(context).colorScheme.error;
-      case TaskPriority.low:
-        return const Color(0xFF5E7C93);
-      case TaskPriority.medium:
-        return Theme.of(context).colorScheme.primary;
-    }
-  }
 }
+
+enum _CourseAction { edit, upload, delete }
 
 class _AttachmentPreview extends StatelessWidget {
   const _AttachmentPreview({required this.attachment, this.mediaBaseUrl});
 
-  final TaskAttachment attachment;
+  final CourseAttachment attachment;
   final String? mediaBaseUrl;
 
   @override

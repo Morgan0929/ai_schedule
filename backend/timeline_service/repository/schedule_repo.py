@@ -4,7 +4,13 @@
 from datetime import date
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
-from timeline_service.models.schedule_model import ScheduleModel, get_current_semester
+from timeline_service.models.schedule_model import (
+    ScheduleModel,
+    ScheduleAttachmentModel,
+    get_current_semester,
+    get_semester_for_date,
+    get_semester_week,
+)
 
 
 class ScheduleRepository:
@@ -36,6 +42,90 @@ class ScheduleRepository:
         await self.db.flush()
         return schedules
 
+    async def create(self, schedule: ScheduleModel) -> ScheduleModel:
+        self.db.add(schedule)
+        await self.db.flush()
+        await self.db.refresh(schedule)
+        return schedule
+
+    async def find_by_id(self, schedule_id: int) -> ScheduleModel | None:
+        result = await self.db.execute(
+            select(ScheduleModel).where(ScheduleModel.id == schedule_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_by_user(
+        self,
+        user_id: int,
+        semester: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[ScheduleModel], int]:
+        if not semester:
+            semester = get_current_semester()
+
+        base_query = select(ScheduleModel).where(
+            ScheduleModel.user_id == user_id,
+            ScheduleModel.semester == semester,
+        )
+        count_result = await self.db.execute(base_query)
+        total = len(count_result.scalars().all())
+
+        query = (
+            base_query
+            .order_by(ScheduleModel.week_day, ScheduleModel.start_section, ScheduleModel.id)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        result = await self.db.execute(query)
+        return list(result.scalars().all()), total
+
+    async def update(self, schedule: ScheduleModel) -> ScheduleModel:
+        await self.db.flush()
+        await self.db.refresh(schedule)
+        return schedule
+
+    async def delete(self, schedule: ScheduleModel) -> bool:
+        await self.db.delete(schedule)
+        await self.db.flush()
+        return True
+
+    async def add_attachments(
+        self,
+        schedule_id: int,
+        user_id: int,
+        attachments: list[ScheduleAttachmentModel],
+    ) -> list[ScheduleAttachmentModel]:
+        for attachment in attachments:
+            self.db.add(attachment)
+        await self.db.flush()
+        for attachment in attachments:
+            await self.db.refresh(attachment)
+        return attachments
+
+    async def list_attachments(
+        self, schedule_id: int, user_id: int
+    ) -> list[ScheduleAttachmentModel]:
+        result = await self.db.execute(
+            select(ScheduleAttachmentModel)
+            .where(
+                ScheduleAttachmentModel.schedule_id == schedule_id,
+                ScheduleAttachmentModel.user_id == user_id,
+            )
+            .order_by(ScheduleAttachmentModel.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def delete_attachments(self, schedule_id: int, user_id: int) -> int:
+        result = await self.db.execute(
+            delete(ScheduleAttachmentModel).where(
+                ScheduleAttachmentModel.schedule_id == schedule_id,
+                ScheduleAttachmentModel.user_id == user_id,
+            )
+        )
+        await self.db.flush()
+        return result.rowcount or 0
+
     async def find_by_user_semester(
         self, user_id: int, semester: str = None
     ) -> list[ScheduleModel]:
@@ -57,9 +147,12 @@ class ScheduleRepository:
     async def find_by_date(
         self, user_id: int, target_date: date
     ) -> list[ScheduleModel]:
-        """查询指定日期的课程（根据星期几匹配）"""
+        """查询指定日期的课程（根据学期周次和星期几匹配）"""
         week_day = target_date.isoweekday()  # 1=周一, 7=周日
-        semester = get_current_semester()
+        semester = get_semester_for_date(target_date)
+        semester_week = get_semester_week(target_date, semester)
+        if semester_week is None:
+            return []
 
         result = await self.db.execute(
             select(ScheduleModel)
@@ -67,6 +160,8 @@ class ScheduleRepository:
                 ScheduleModel.user_id == user_id,
                 ScheduleModel.semester == semester,
                 ScheduleModel.week_day == week_day,
+                ScheduleModel.start_week <= semester_week,
+                ScheduleModel.end_week >= semester_week,
                 ScheduleModel.is_active == True,
             )
             .order_by(ScheduleModel.start_section)

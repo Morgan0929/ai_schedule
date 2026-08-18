@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'app_scope.dart';
@@ -23,6 +25,7 @@ class _LinAppState extends State<LinApp> {
   void initState() {
     super.initState();
     appState = AppState();
+    unawaited(appState.restoreSession());
   }
 
   @override
@@ -71,6 +74,11 @@ class _HomeGate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
+    if (state.restoringSession) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
     return state.isSignedIn ? const ShellScreen() : const LoginScreen();
   }
 }

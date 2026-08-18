@@ -19,4 +19,11 @@ class User {
       role: json['role']?.toString() ?? 'USER',
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'username': username,
+        'email': email,
+        'role': role,
+      };
 }

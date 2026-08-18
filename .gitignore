@@ -14,11 +14,14 @@ personal/
 backend/personal/
 
 # Flutter
+.dart_appdata/
+.dart_localappdata/
 mobile/build/
 mobile/.dart_tool/
 mobile/.packages
 .env
 .env.local
 backend/.env
+backend/uploads/
 dev.db
 backend/dev.db

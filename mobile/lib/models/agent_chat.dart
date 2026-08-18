@@ -83,3 +83,25 @@ class AgentChatResponse {
     );
   }
 }
+
+class AgentStreamEvent {
+  const AgentStreamEvent.token(this.content)
+      : response = null,
+        error = null;
+
+  const AgentStreamEvent.done(this.response)
+      : content = '',
+        error = null;
+
+  const AgentStreamEvent.error(this.error)
+      : content = '',
+        response = null;
+
+  final String content;
+  final AgentChatResponse? response;
+  final String? error;
+
+  bool get isToken => content.isNotEmpty && response == null && error == null;
+  bool get isDone => response != null;
+  bool get isError => error != null;
+}

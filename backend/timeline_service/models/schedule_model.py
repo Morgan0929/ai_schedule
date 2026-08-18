@@ -7,8 +7,8 @@
 
 学期结束后自动清理
 """
-from datetime import datetime, date
-from sqlalchemy import String, Integer, Date, Time, Text, Boolean
+from datetime import datetime, date, timedelta
+from sqlalchemy import String, Integer, Date, Time, Text, Boolean, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 from common.database import Base
@@ -55,6 +55,27 @@ class ScheduleModel(Base):
                 f"[{self.semester}])>")
 
 
+class ScheduleAttachmentModel(Base):
+    """课表附件（图片）"""
+    __tablename__ = "schedule_attachment"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    schedule_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("schedule.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    file_url: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
 # 学期中文名映射
 SEMESTER_SPRING = "春季"
 SEMESTER_FALL = "秋季"
@@ -73,6 +94,42 @@ def get_current_semester() -> str:
         return f"{year}年{SEMESTER_SPRING}"
     else:
         return f"{year}年{SEMESTER_FALL}"
+
+
+def get_semester_for_date(target_date: date) -> str:
+    """根据目标日期推断学期标识。"""
+    year = target_date.year
+    if 2 <= target_date.month <= 7:
+        return f"{year}年{SEMESTER_SPRING}"
+    return f"{year}年{SEMESTER_FALL}"
+
+
+def get_semester_week(target_date: date, semester: str | None = None) -> int | None:
+    """
+    计算目标日期是指定学期第几周。
+
+    秋季学期按 9 月 1 日所在周的周一作为第 1 周起点；
+    春季学期按 2 月 1 日所在周的周一作为第 1 周起点。
+    起点前的日期不展示课表，避免暑假/寒假日期按星期误命中课程。
+    """
+    semester_text = semester or get_semester_for_date(target_date)
+    import re
+
+    match = re.match(r"(\d{4})年(春季|秋季|夏季|短学期)", semester_text)
+    if not match:
+        return None
+    year = int(match.group(1))
+    term = match.group(2)
+    if term == SEMESTER_FALL:
+        anchor = date(year, 9, 1)
+    elif term == SEMESTER_SPRING:
+        anchor = date(year, 2, 1)
+    else:
+        anchor = date(year, 7, 1)
+    first_monday = anchor - timedelta(days=anchor.isoweekday() - 1)
+    if target_date < first_monday:
+        return None
+    return (target_date - first_monday).days // 7 + 1
 
 
 def parse_semester(text: str) -> str | None:

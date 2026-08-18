@@ -19,6 +19,7 @@ class TaskItem {
     this.location,
     this.category = TaskCategory.personal,
     this.tags = const [],
+    this.attachments = const [],
   });
 
   final int id;
@@ -32,6 +33,7 @@ class TaskItem {
   final String? location;
   final TaskCategory category;
   final List<String> tags;
+  final List<TaskAttachment> attachments;
 
   bool get isToday {
     final now = DateTime.now();
@@ -56,6 +58,10 @@ class TaskItem {
       category: _categoryFromApi(json['category']?.toString()),
       tags: (json['tags'] as List<dynamic>? ?? const [])
           .map((item) => item.toString())
+          .toList(),
+      attachments: (json['attachments'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(TaskAttachment.fromJson)
           .toList(),
     );
   }
@@ -95,6 +101,32 @@ class TaskItem {
       default:
         return TaskCategory.personal;
     }
+  }
+}
+
+class TaskAttachment {
+  const TaskAttachment({
+    required this.id,
+    required this.fileUrl,
+    required this.contentType,
+    required this.fileSize,
+    this.originalName,
+  });
+
+  final String id;
+  final String fileUrl;
+  final String contentType;
+  final int fileSize;
+  final String? originalName;
+
+  factory TaskAttachment.fromJson(Map<String, dynamic> json) {
+    return TaskAttachment(
+      id: json['id']?.toString() ?? '',
+      fileUrl: json['file_url']?.toString() ?? '',
+      contentType: json['content_type']?.toString() ?? '',
+      fileSize: json['file_size'] as int? ?? 0,
+      originalName: json['original_name']?.toString(),
+    );
   }
 }
 

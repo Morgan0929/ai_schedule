@@ -2,12 +2,25 @@
 任务业务逻辑层
 """
 from datetime import datetime
+import hashlib
+from pathlib import Path
+from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from timeline_service.models.task_model import TaskModel
 from timeline_service.repository.task_repo import TaskRepository
 from timeline_service.utils.conflict_detector import ConflictDetector
 from common.exceptions import NotFoundException, BadRequestException, ConflictException
-from common.schemas.task import TaskDTO, TaskCreateDTO, TaskUpdateDTO
+from common.schemas.task import TaskDTO, TaskCreateDTO, TaskUpdateDTO, TaskAttachmentDTO
+
+
+ALLOWED_IMAGE_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+IMAGE_EXTENSIONS = {ext: content_type for content_type, ext in ALLOWED_IMAGE_TYPES.items()}
+MAX_IMAGE_SIZE = 10 * 1024 * 1024
 
 
 class TaskService:
@@ -58,14 +71,14 @@ class TaskService:
             tags=dto.tags or [],
         )
         task = await self.repo.create(task)
-        return TaskDTO.model_validate(task)
+        return self._to_dto(task)
 
     async def get_task(self, task_id: int) -> TaskDTO:
         """获取任务详情"""
         task = await self.repo.find_by_id(task_id)
         if not task:
             raise NotFoundException("任务", task_id)
-        return TaskDTO.model_validate(task)
+        return self._to_dto(task)
 
     async def update_task(self, task_id: int, dto: TaskUpdateDTO) -> TaskDTO:
         """更新任务"""
@@ -83,7 +96,7 @@ class TaskService:
                 setattr(task, key, value)
 
         task = await self.repo.update(task)
-        return TaskDTO.model_validate(task)
+        return self._to_dto(task)
 
     async def update_task_for_user(
         self, user_id: int, task_id: int, dto: TaskUpdateDTO
@@ -94,12 +107,30 @@ class TaskService:
             raise NotFoundException("task", task_id)
         return await self.update_task(task_id, dto)
 
+    async def get_task_for_user(self, user_id: int, task_id: int) -> TaskDTO:
+        """Fetch a task only when it belongs to the requesting user."""
+        task = await self.repo.find_by_id(task_id)
+        if not task or task.user_id != user_id:
+            raise NotFoundException("task", task_id)
+        return self._to_dto(task)
+
     async def delete_task(self, task_id: int) -> bool:
         """删除任务"""
         success = await self.repo.delete(task_id)
         if not success:
             raise NotFoundException("任务", task_id)
         return True
+
+    async def delete_task_for_user(self, user_id: int, task_id: int) -> bool:
+        task = await self.repo.find_by_id(task_id)
+        if not task or task.user_id != user_id:
+            raise NotFoundException("task", task_id)
+        for attachment in self._attachments(task):
+            try:
+                Path(self._storage_path(attachment["file_url"])).unlink(missing_ok=True)
+            except OSError:
+                pass
+        return await self.delete_task(task_id)
 
     async def list_tasks(
         self, user_id: int, start: datetime = None, end: datetime = None,
@@ -115,4 +146,68 @@ class TaskService:
         else:
             tasks, total = await self.repo.list_by_user(user_id, page, page_size)
 
-        return [TaskDTO.model_validate(t) for t in tasks], total
+        return [self._to_dto(t) for t in tasks], total
+
+    async def add_attachment(
+        self, user_id: int, task_id: int, file: UploadFile,
+    ) -> TaskAttachmentDTO:
+        task = await self.repo.find_by_id(task_id)
+        if not task or task.user_id != user_id:
+            raise NotFoundException("task", task_id)
+        content_type = self._resolve_content_type(file)
+        if content_type not in ALLOWED_IMAGE_TYPES:
+            raise BadRequestException("仅支持 JPEG / PNG / WebP / GIF 图片")
+        data = await file.read()
+        if len(data) > MAX_IMAGE_SIZE:
+            raise BadRequestException("图片大小不能超过 10MB")
+
+        digest = hashlib.sha256(data).hexdigest()[:16]
+        ext = ALLOWED_IMAGE_TYPES[content_type]
+        safe_name = f"task-{task.id}-{digest}{ext}"
+        storage_dir = Path(__file__).resolve().parents[2] / "uploads" / "task"
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        path = storage_dir / safe_name
+        path.write_bytes(data)
+
+        attachment = {
+            "id": digest,
+            "task_id": task.id,
+            "file_name": safe_name,
+            "original_name": file.filename or safe_name,
+            "content_type": content_type,
+            "file_size": len(data),
+            "file_url": f"/media/task/{safe_name}",
+            "created_at": datetime.now().isoformat(),
+        }
+        metadata = dict(task.extra_data or {})
+        metadata["attachments"] = [*self._attachments(task), attachment]
+        task.extra_data = metadata
+        await self.repo.update(task)
+        return TaskAttachmentDTO.model_validate(attachment)
+
+    @staticmethod
+    def _attachments(task: TaskModel) -> list[dict]:
+        metadata = task.extra_data or {}
+        items = metadata.get("attachments", []) if isinstance(metadata, dict) else []
+        return [item for item in items if isinstance(item, dict)]
+
+    @staticmethod
+    def _storage_path(file_url: str) -> str:
+        relative = file_url.removeprefix("/media/")
+        return str(Path(__file__).resolve().parents[2] / "uploads" / relative)
+
+    @staticmethod
+    def _resolve_content_type(file: UploadFile) -> str:
+        if file.content_type in ALLOWED_IMAGE_TYPES:
+            return file.content_type
+        ext = Path(file.filename or "").suffix.lower()
+        return IMAGE_EXTENSIONS.get(ext, file.content_type or "")
+
+    @classmethod
+    def _to_dto(cls, task: TaskModel) -> TaskDTO:
+        dto = TaskDTO.model_validate(task)
+        dto.attachments = [
+            TaskAttachmentDTO.model_validate(item)
+            for item in cls._attachments(task)
+        ]
+        return dto

@@ -52,6 +52,13 @@ from agent_service.utils.coordinator import (
 )
 
 
+CONFIRM_WORDS = {
+    '确认', '确定', '是', '是的', '对', '对的', '好', '好的', '可以', '行',
+    '同意', '执行', '就这样', '没问题', '嗯', '嗯嗯', 'YES', 'Y', 'OK', 'OKAY',
+    'yes', 'y', 'ok', 'okay',
+}
+
+
 # ═══════════════════════════════════════════════════
 # ConflictChoice — 解析结果
 # ═══════════════════════════════════════════════════
@@ -205,10 +212,17 @@ class ConflictChoiceParser:
         """
         time_intent = re.search(r'(换到|改到|挪到|推迟到|提前到|调整到|换成|改成)', text)
         if not time_intent:
-            return None
+            return cls._extract_direct_time(text, reference_date=reference_date)
 
         after = text[time_intent.end():]
         return cls._parse_time_expression(after, reference_date=reference_date)
+
+    @classmethod
+    def _extract_direct_time(cls, text: str, reference_date: str | None = None) -> str | None:
+        """Parse bare time replies in confirmation, e.g. “那就早上九点吧”."""
+        if not re.search(r'(早上|早晨|上午|中午|下午|晚上|傍晚|\d{1,2}\s*点|[一二两三四五六七八九十]{1,2}\s*点)', text):
+            return None
+        return cls._parse_time_expression(text, reference_date=reference_date)
 
     @classmethod
     def _extract_relative_time(cls, text: str, options: dict, choice: str | None) -> str | None:
@@ -356,7 +370,7 @@ class ConflictChoiceParser:
                         days += 7
                     d = base_date + timedelta(days=days)
                     break
-        elif hour is not None and hour < 12:
+        elif hour is not None and hour < 12 and reference_date is None:
             # 上午的时间, 如果现在是下午 → 默认明天
             now = datetime.now()
             if now.hour >= 12:
@@ -523,7 +537,7 @@ def _handle_confirm(pending: dict, user_input: str) -> dict[str, Any]:
     """waiting_confirm 阶段: 确认/取消"""
     upper = user_input.strip().upper()
 
-    if upper in ('确认', '是', 'YES', 'Y', 'OK', '好', '可以', '行'):
+    if user_input.strip() in CONFIRM_WORDS or upper in CONFIRM_WORDS:
         # 从 options + plan 重建 commit actions
         plan = pending.get('selected_plan', '')
         options = pending.get('options', {})
@@ -531,11 +545,38 @@ def _handle_confirm(pending: dict, user_input: str) -> dict[str, Any]:
         move_to = (options.get(plan, {}) or {}).get('move_to', '')
         summary = pending.get('summary', '')
 
+        opt = options.get(plan, {})
+        if opt.get('requires_time') and not move_to:
+            title = _plan_target_title(opt, entities)
+            return {
+                'intent': 'update_event',
+                'sub_tasks': [],
+                'needs_confirmation': True,
+                'pending_action': {**pending, 'stage': STAGE_WAITING_CONFIRM},
+                'pending_tasks': [],
+                'active_flow': 'conflict_resolution',
+                '_confirm_message': (
+                    f'请先指定「{title}」的新时间，再点同意执行。\n'
+                    f'例如：换到晚上九点 / 改到明天下午三点。'
+                ),
+                '_skip_validator': True,
+            }
         sub_tasks = _build_commit_actions(plan, options, entities, move_to)
         print(f'[CONFLICT] confirm→COMMIT {len(sub_tasks)}acts plan={plan}')
 
+        if not sub_tasks:
+            return {
+                'intent': 'chat',
+                'sub_tasks': [],
+                'needs_confirmation': True,
+                'pending_action': {},
+                'pending_tasks': [],
+                'active_flow': None,
+                '_confirm_message': opt.get('confirm_reply') or '好的，已按该方案处理。',
+                '_skip_validator': True,
+            }
+
         # execution_context
-        opt = options.get(plan, {})
         action = opt.get('action', {})
         move_title = _get_title(action.get('target'), entities)
 
@@ -672,6 +713,8 @@ def _execute_plan(choice: str, options: dict, pending: dict) -> dict:
 
     if not actions:
         t = opt.get("preview", {}).get("discard", "")
+        opt["confirm_reply"] = f"好的，已取消「{t}」。" if t else "好的，已取消这次安排。"
+        options[choice] = opt
         return _to_confirm(choice, pending, options, proposed=[],
             summary=f'不创建「{t}」(冲突已取消)。',
             confirm_msg=f'好的，不创建「{t}」。确认吗？')
@@ -761,7 +804,15 @@ def _build_confirm_msg(opt: dict, move_to: str, entities: dict) -> str:
     title = _get_title(target, entities)
     if move_to:
         return f'好的。\n\n已计划把「{title}」调整到：\n📅 {_fmt_time(move_to)}\n\n确认执行吗？'
-    return f'已计划调整「{title}」。\n请指定新时间，或回复「确认」执行。'
+    return f'已选择调整「{title}」。\n请先指定新时间，例如“换到晚上九点”。'
+
+
+def _plan_target_title(opt: dict, entities: dict) -> str:
+    actions = opt.get("actions", [])
+    if not actions:
+        return opt.get("preview", {}).get("discard", "这项日程")
+    target = actions[0].get("ref_id") or actions[0].get("task_id")
+    return _get_title(target, entities) or "这项日程"
 
 
 def _fmt_time(iso: str) -> str:

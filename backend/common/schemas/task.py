@@ -20,6 +20,18 @@ class TaskStatusEnum(str, Enum):
     CANCELLED = "CANCELLED"
 
 
+class TaskAttachmentDTO(BaseModel):
+    """任务附件元数据。"""
+    id: str
+    task_id: int
+    file_name: str
+    original_name: str
+    content_type: str
+    file_size: int
+    file_url: str
+    created_at: datetime | None = None
+
+
 class TaskCategoryEnum(str, Enum):
     MEETING = "MEETING"
     TRIP = "TRIP"
@@ -39,10 +51,11 @@ class TaskDTO(BaseModel):
     status: TaskStatusEnum = TaskStatusEnum.PENDING
     location: str | None = None
     category: TaskCategoryEnum = TaskCategoryEnum.PERSONAL
-    tags: list[str] = []
-    extra_data: dict[str, Any] = {}
+    tags: list[str] = Field(default_factory=list)
+    extra_data: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    attachments: list[TaskAttachmentDTO] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
@@ -56,7 +69,7 @@ class TaskCreateDTO(BaseModel):
     priority: PriorityEnum = PriorityEnum.MEDIUM
     location: str | None = None
     category: TaskCategoryEnum = TaskCategoryEnum.PERSONAL
-    tags: list[str] = []
+    tags: list[str] = Field(default_factory=list)
 
     def validate_time_range(self) -> bool:
         """验证时间范围合法性"""

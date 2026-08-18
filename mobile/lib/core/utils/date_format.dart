@@ -13,7 +13,9 @@ String formatDateTime(DateTime value) {
 }
 
 String formatDurationRange(DateTime start, DateTime end) {
-  if (start.year == end.year && start.month == end.month && start.day == end.day) {
+  if (start.year == end.year &&
+      start.month == end.month &&
+      start.day == end.day) {
     return '${formatDate(start)} ${formatClock(start)}-${formatClock(end)}';
   }
   return '${formatDateTime(start)} - ${formatDateTime(end)}';
