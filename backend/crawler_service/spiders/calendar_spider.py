@@ -6,6 +6,7 @@
 import httpx
 from datetime import date
 from crawler_service.spiders.base import BaseSpider, SpiderResult
+from common.utils.http_client import get_json
 
 
 class CalendarSpider(BaseSpider):
@@ -31,19 +32,13 @@ class CalendarSpider(BaseSpider):
             url = f"https://date.nager.at/api/v3/PublicHolidays/{year}/CN"
             holidays = []
 
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(url)
-                if resp.status_code == 200:
-                    raw = resp.json()
-                    for h in raw:
-                        holidays.append({
-                            "date": h.get("date"),
-                            "name": h.get("localName", h.get("name", "")),
-                            "type": "public_holiday",
-                        })
-                else:
-                    # 回退：返回一些已知的节假日
-                    holidays = self._fallback_holidays(year)
+            raw = await get_json("calendar", url, timeout=15.0)
+            for h in raw:
+                holidays.append({
+                    "date": h.get("date"),
+                    "name": h.get("localName", h.get("name", "")),
+                    "type": "public_holiday",
+                })
 
             items = holidays
             if include_weekend:
@@ -56,7 +51,7 @@ class CalendarSpider(BaseSpider):
                 items=items,
             )
 
-        except httpx.HTTPError as e:
+        except Exception as e:
             # 网络不可用时用回退数据
             items = self._fallback_holidays(year)
             return SpiderResult(
@@ -65,8 +60,6 @@ class CalendarSpider(BaseSpider):
                 data={"year": year, "count": len(items), "offline": True},
                 items=items,
             )
-        except Exception as e:
-            return self.error_result("calendar", str(e))
 
     @staticmethod
     def _fallback_holidays(year: int) -> list[dict]:

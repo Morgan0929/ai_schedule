@@ -4,10 +4,11 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from app_service.models.user_model import UserModel
 from app_service.repository.user_repo import UserRepository
-from common.utils.password import hash_password, verify_password
-from common.utils.jwt import create_access_token
-from common.exceptions import BadRequestException, UnauthorizedException, NotFoundException
 from common.schemas.user import UserCreateDTO, UserLoginDTO, LoginResultDTO, UserDTO
+from common.utils.password import hash_password, verify_password
+from common.utils.jwt import create_access_token, create_session_id
+from common.utils.auth_session import store_login_session
+from common.exceptions import BadRequestException, UnauthorizedException, NotFoundException
 
 
 class UserService:
@@ -47,16 +48,22 @@ class UserService:
         if not verify_password(dto.password, user.password_hash):
             raise UnauthorizedException("用户名或密码错误")
 
+        session_id = create_session_id()
+        user_dto = UserDTO.model_validate(user)
+        await store_login_session(session_id, user_dto)
+
         # 生成 token
         token = create_access_token(
             user_id=user.id,
             username=user.username,
             role=user.role,
+            session_id=session_id,
         )
 
         return LoginResultDTO(
             token=token,
-            user=UserDTO.model_validate(user),
+            session_id=session_id,
+            user=user_dto,
         )
 
     async def get_user(self, user_id: int) -> UserDTO:

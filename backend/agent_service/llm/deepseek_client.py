@@ -8,6 +8,13 @@ DeepSeek LLM 客户端 — 双模式
 """
 from openai import AsyncOpenAI
 from common.config import settings
+from common.utils.llm_guard import guarded_llm_call
+
+
+async def _mock_chat_text(messages: list[dict]) -> str:
+    from agent_service.llm.mock_agent import mock_chat
+    user_msg = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
+    return await mock_chat(user_msg)
 
 
 def is_llm_available() -> bool:
@@ -38,38 +45,25 @@ async def chat_completion(
     不可用时自动回退到 mock 引擎
     """
     if not is_llm_available():
-        from agent_service.llm.mock_agent import mock_chat
         # 提取最后一条用户消息
-        user_msg = ""
-        for m in reversed(messages):
-            if m.get("role") == "user":
-                user_msg = m["content"]
-                break
-        return await mock_chat(user_msg)
+        return await _mock_chat_text(messages)
 
     client = get_llm_client()
 
     if stream:
-        response = await client.chat.completions.create(
-            model=settings.DEEPSEEK_MODEL,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=True,
+        return await guarded_llm_call(
+            "deepseek-stream",
+            lambda: _stream_completion_text(client, messages, temperature, max_tokens),
+            timeout=30.0,
+            fallback_fn=lambda: _mock_stream_completion(messages),
         )
-        full_content = ""
-        async for chunk in response:
-            if chunk.choices[0].delta.content:
-                full_content += chunk.choices[0].delta.content
-        return full_content
-    else:
-        response = await client.chat.completions.create(
-            model=settings.DEEPSEEK_MODEL,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return response.choices[0].message.content
+
+    return await guarded_llm_call(
+        "deepseek-chat",
+        lambda: _completion_text(client, messages, temperature, max_tokens),
+        timeout=25.0,
+        fallback_fn=lambda: _mock_completion(messages),
+    )
 
 
 async def chat_completion_json(
@@ -87,14 +81,12 @@ async def chat_completion_json(
 
     import json
     client = get_llm_client()
-    response = await client.chat.completions.create(
-        model=settings.DEEPSEEK_MODEL,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        # DeepSeek may not support response_format; rely on prompt engineering instead
+    content = await guarded_llm_call(
+        "deepseek-json",
+        lambda: _completion_text(client, messages, temperature, max_tokens),
+        timeout=25.0,
     )
-    content = response.choices[0].message.content.strip()
+    content = content.strip()
 
     # Try direct JSON parse
     try:
@@ -152,7 +144,27 @@ async def astream_chat(
             await asyncio.sleep(0.02)  # 模拟打字效果
         return
 
-    client = get_llm_client()
+    text = await guarded_llm_call(
+        "deepseek-stream",
+        lambda: _stream_completion_text(get_llm_client(), messages, temperature, max_tokens),
+        timeout=30.0,
+        fallback_fn=lambda: _mock_chat_text(messages),
+    )
+    for char in text:
+        yield char
+
+
+async def _completion_text(client: AsyncOpenAI, messages: list[dict], temperature: float, max_tokens: int) -> str:
+    response = await client.chat.completions.create(
+        model=settings.DEEPSEEK_MODEL,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    return response.choices[0].message.content or ""
+
+
+async def _stream_completion_text(client: AsyncOpenAI, messages: list[dict], temperature: float, max_tokens: int) -> str:
     response = await client.chat.completions.create(
         model=settings.DEEPSEEK_MODEL,
         messages=messages,
@@ -160,9 +172,19 @@ async def astream_chat(
         max_tokens=max_tokens,
         stream=True,
     )
+    full_content = ""
     async for chunk in response:
         if chunk.choices and chunk.choices[0].delta.content:
-            yield chunk.choices[0].delta.content
+            full_content += chunk.choices[0].delta.content
+    return full_content
+
+
+async def _mock_completion(messages: list[dict]) -> str:
+    return await _mock_chat_text(messages)
+
+
+async def _mock_stream_completion(messages: list[dict]) -> str:
+    return await _mock_completion(messages)
 
 
 # ============ Structured Output (Pydantic) ============
@@ -189,4 +211,17 @@ def get_structured_llm(output_schema: type):
         temperature=0.3,
         max_tokens=2048,
     )
-    return llm.with_structured_output(output_schema, method="json_mode")
+    structured = llm.with_structured_output(output_schema, method="json_mode")
+
+    class _GuardedStructuredLLM:
+        def __init__(self, wrapped):
+            self._wrapped = wrapped
+
+        async def ainvoke(self, prompt):
+            return await guarded_llm_call(
+                "structured-llm",
+                lambda: self._wrapped.ainvoke(prompt),
+                timeout=25.0,
+            )
+
+    return _GuardedStructuredLLM(structured)

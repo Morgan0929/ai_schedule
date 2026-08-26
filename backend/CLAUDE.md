@@ -38,7 +38,7 @@
 | 爬虫 | requests + BS4 + Playwright | — | 4 个注册爬虫 |
 | 定时任务 | APScheduler | 3.11.2 | 爬虫定时采集 |
 | 向量数据库 | pgvector + BGE-M3 | PostgreSQL 扩展 | RAG 语义检索 (1024d) |
-| 移动端 | Flutter | 待开发 | 手机 App |
+| 移动端 | Flutter | 已接入基础端 | 手机 App + 课表网页登录导入 |
 
 ---
 
@@ -77,7 +77,7 @@ D:/AIagent日程规划/
 │   │   └── services/         Embedding + RagService
 │   └── personal/                     本地脚本 (gitignored)
 │
-└── mobile/                           Flutter App (待开发)
+└── mobile/                           Flutter App (基础端 + 课表网页登录导入)
 ```
 
 ### 3.2 Agent 工作流
@@ -178,7 +178,7 @@ Middleware = 拦截 (ToolCallLimit/Retry/Summarize)
 | Phase 3 — 爬虫 | ✅ | 4爬虫 (BS4/Playwright/httpx) |
 | Phase 4 — Agent | ✅ | LangGraph + Pydantic + 流式SSE + 中间件 + 记忆系统 |
 | Phase 5 — RAG | ✅ | pgvector + BGE-M3(1024d) + Document Pipeline (8类型分类+5种Splitter) |
-| Phase 6 — Flutter | 🔲 | 移动端 |
+| Phase 6 — Flutter | ✅ | 登录/日程/Agent 对话/课表网页登录导入 |
 | Phase 7 — 部署 | 🔲 | Docker + Nginx |
 
 ### Agent 核心能力清单
@@ -200,6 +200,33 @@ Middleware = 拦截 (ToolCallLimit/Retry/Summarize)
 | 文档分析 | Document Analyzer (7种文档类型) |
 | 消息裁剪 | Token Counter + prune_messages + 重要消息保护 |
 | 安全 | Key不放APP / AI不直连DB / 手机只是客户端 |
+| 课表导入 | App WebView 登录教务系统 → crawler_service 解析标准表格/矩阵表/视觉卡片 → SQL schedule |
+
+### 课表网页登录导入
+
+移动端入口：`mobile/lib/screens/schedule_web_import_screen.dart`  
+后端解析：`backend/crawler_service/services/schedule_import_service.py`  
+接口：`POST /api/v1/crawl/schedule/from-html`
+
+流程：
+
+```
+WebView 登录教务系统
+    │
+    ▼
+扫描课表入口: 我的课表 / 课表查询 / 课程查询 / 我的课程
+    │
+    ▼
+进入课表页或用户手动打开结果页
+    │
+    ▼
+采集 document HTML + 同源 iframe + 可见文本 + 课程卡片位置 + 星期/日期表头
+    │
+    ▼
+crawler_service 解析并保存 schedule
+```
+
+关键限制：跨域 iframe、canvas、图片课表不能直接通过 DOM 源码读取。当前实现会尽量读取同源 iframe 和可见 DOM；完全图像化课表需要后续截图/OCR兜底。
 
 ---
 
@@ -257,6 +284,8 @@ GET  /api/v1/crawl/spiders       列出爬虫
 POST /api/v1/crawl/trigger       手动触发
 GET  /api/v1/crawl/records       查询记录
 POST /api/v1/crawl/schedule/refresh  课表刷新(延迟双删)
+POST /api/v1/crawl/schedule/from-url  从 URL 发现并导入课表
+POST /api/v1/crawl/schedule/from-html 从 App WebView 当前页面导入课表
 ```
 
 ### RAG (rag_service:8004)
@@ -265,6 +294,18 @@ POST /api/v1/crawl/schedule/refresh  课表刷新(延迟双删)
 POST /api/v1/rag/documents       上传文档
 GET  /api/v1/rag/search?q=       语义搜索
 ```
+
+---
+
+## 六点五、Git 工作流
+
+主线规则：
+
+1. `main` 只保存已验证通过的功能或 Bug 修复。
+2. 规划、开发、测试、Bug 修复过程统一在支线提交，默认命名 `codex/<功能或问题名>`。
+3. 支线提交只包含当前任务相关文件，不混入用户已有改动或无关实验。
+4. 功能完成并通过验证后，再合入 `main`。
+5. 合入前需要说明验证命令和结果。
 
 ---
 
@@ -353,5 +394,5 @@ Vector   (Qdrant, 未来)      : 语义搜索
 
 ---
 
-*最后更新：2026-07-15*
+*最后更新：2026-08-13*
 *维护者：Claude AI Assistant*

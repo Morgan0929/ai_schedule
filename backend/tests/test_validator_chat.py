@@ -49,7 +49,7 @@ class ValidatorChatTest(unittest.TestCase):
             })
         )
 
-        self.assertEqual(result["final_reply"], "你好，我是林。")
+        self.assertEqual(result["final_reply"], "你好，我是林。日程、课程和提醒交给我就好。")
 
 
 if __name__ == "__main__":

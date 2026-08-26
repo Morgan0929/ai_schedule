@@ -6,6 +6,8 @@ MCP Search Server — 网页搜索
 import json
 import logging
 
+from common.utils.http_client import get_json
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,14 +52,10 @@ class SearchMCPServer:
             return json.dumps({"error": "query is required"})
 
         try:
-            import httpx
             # DuckDuckGo Instant Answer API (免费, 无需 API Key)
             url = "https://api.duckduckgo.com/"
             params = {"q": query, "format": "json", "no_html": 1, "skip_disambig": 1}
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, params=params)
-                resp.raise_for_status()
-                data = resp.json()
+            data = await get_json("search", url, timeout=10.0, params=params)
 
             results = []
             # Abstract

@@ -36,4 +36,5 @@ class LoginResultDTO(BaseModel):
     """登录响应"""
     token: str
     token_type: str = "Bearer"
+    session_id: str = Field(default="", description="Redis 会话 ID")
     user: UserDTO

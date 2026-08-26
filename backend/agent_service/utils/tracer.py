@@ -14,17 +14,27 @@ AI Trace 日志系统 — 双层记录
 """
 import json
 import logging
+import asyncio
 import time
 import uuid
 from datetime import datetime
 from typing import Any
 from dataclasses import dataclass, field, asdict
 
+from agent_service.utils.runtime import BACKGROUND_TASK_GOVERNOR
+
 logger = logging.getLogger("ai_trace")
 
 # 是否同时输出到控制台
 CONSOLE_TRACE = True
 TRACE_COMPACT = True
+
+
+def _stable_session_uuid(session_id: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(session_id)
+    except (TypeError, ValueError):
+        return uuid.uuid5(uuid.NAMESPACE_URL, f"lin-agent-session:{session_id}")
 
 
 # ============ LangSmith 飞行记录仪 ============
@@ -145,8 +155,7 @@ class AgentTracer:
             print(f"[Trace:{self.trace_id}] end steps={len(self.steps)} ms={total_ms:.0f} {ok}")
 
         # 异步存入数据库 + LangSmith 飞行记录仪（不阻塞回复）
-        import asyncio
-        asyncio.create_task(self._persist(summary))
+        BACKGROUND_TASK_GOVERNOR.submit(self._persist(summary), name="trace-persist")
         # LangSmith 后台发送 —— 失败了不影响用户
         try:
             loop = asyncio.get_running_loop()
@@ -163,6 +172,10 @@ class AgentTracer:
             from sqlalchemy import text
 
             async with async_session_factory() as db:
+                messages = [
+                    {"role": "user", "content": self.user_input},
+                    {"role": "assistant", "content": summary["final_reply"][:1000]},
+                ]
                 await db.execute(text("""
                     INSERT INTO agent_session (id, user_id, title, messages, agent_state, is_active)
                     VALUES (:id, :user_id, :title, CAST(:messages AS JSONB), CAST(:state AS JSONB), true)
@@ -171,17 +184,11 @@ class AgentTracer:
                         agent_state = CAST(:state AS JSONB),
                         updated_at = CURRENT_TIMESTAMP
                 """), {
-                    "id": uuid.UUID(self.session_id) if len(self.session_id) == 36 else uuid.uuid4(),
+                    "id": _stable_session_uuid(self.session_id),
                     "user_id": self.user_id,
                     "title": self.user_input[:100],
-                    "messages": json.dumps(
-                        [{"role": "user", "content": self.user_input}],
-                        ensure_ascii=False,
-                    ),
-                    "append_msg": json.dumps(
-                        [{"role": "assistant", "content": summary["final_reply"][:500]}],
-                        ensure_ascii=False,
-                    ),
+                    "messages": json.dumps(messages, ensure_ascii=False),
+                    "append_msg": json.dumps(messages, ensure_ascii=False),
                     "state": json.dumps(summary, ensure_ascii=False, default=str),
                 })
                 await db.commit()

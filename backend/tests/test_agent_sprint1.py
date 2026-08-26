@@ -97,20 +97,21 @@ def test_event_detector_chat():
     cases = [
         ("今天心情真好", False),
         ("你好", False),
-        ("帮我写代码", False),
-        ("什么是机器学习", False),
-        ("讲个笑话", False),
+        ("帮我写代码", True),
+        ("帮我写一段关于二分查找的代码", True),
+        ("什么是机器学习", True),
+        ("讲个笑话", True),
         ("今天天气不错", False),
-        ("推荐一部电影", False),
-        ("怎么学好英语", False),
+        ("推荐一部电影", True),
+        ("怎么学好英语", True),
         ("明天下午", False),      # only time, no verb → not event
         ("三点半", False),        # only time, no verb
     ]
     passed = 0
     for text, expect_skip in cases:
         r = _detect_event_statement(text)
-        # chat should go to planner (skip_planner=False)
-        ok = r['_skip_planner'] == expect_skip
+        # 普通闲聊走 planner；明确越界请求直接拒绝，避免误建待办。
+        ok = r['_skip_planner'] == expect_skip and not r.get('sub_tasks')
         if ok: passed += 1
         print(f"  {'OK' if ok else 'FAIL'} | {text} → skip={r['_skip_planner']} (expected {expect_skip})")
     print(f"  [{passed}/{len(cases)}] event_detector chat")

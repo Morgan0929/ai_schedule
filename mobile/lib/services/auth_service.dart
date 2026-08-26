@@ -18,6 +18,13 @@ class AuthService {
     return AuthSession.fromJson(data);
   }
 
+  Future<void> logout({required String token}) async {
+    await ApiClient(baseUrl: client.baseUrl, token: token).post(
+      '/api/v1/auth/logout',
+      body: const {},
+    );
+  }
+
   Future<User> register({
     required String username,
     required String password,

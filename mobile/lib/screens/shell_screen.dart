@@ -15,12 +15,6 @@ class ShellScreen extends StatefulWidget {
 class _ShellScreenState extends State<ShellScreen> {
   int _index = 0;
 
-  final _screens = const [
-    DashboardScreen(),
-    TasksScreen(),
-    AgentScreen(),
-  ];
-
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
@@ -28,26 +22,27 @@ class _ShellScreenState extends State<ShellScreen> {
       appBar: AppBar(
         title: Text(_title),
         actions: [
-          IconButton(
-            tooltip: '刷新',
+          TextButton(
             onPressed: state.busy ? null : state.refreshTasks,
-            icon: const Icon(Icons.refresh),
+            child: const Text('刷新'),
           ),
-          IconButton(
-            tooltip: '退出登录',
+          TextButton(
             onPressed: state.signOut,
-            icon: const Icon(Icons.logout),
+            child: const Text('退出'),
           ),
         ],
       ),
-      body: IndexedStack(index: _index, children: _screens),
+      body: _LazyTabHost(
+        index: _index,
+        builder: _buildScreen,
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (value) => setState(() => _index = value),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.today_outlined), label: '今日'),
-          NavigationDestination(icon: Icon(Icons.list_alt), label: '日程'),
-          NavigationDestination(icon: Icon(Icons.auto_awesome), label: '林'),
+          NavigationDestination(icon: Icon(Icons.event_note_outlined), label: '日程'),
+          NavigationDestination(icon: Icon(Icons.auto_awesome_outlined), label: '林'),
         ],
       ),
     );
@@ -62,5 +57,63 @@ class _ShellScreenState extends State<ShellScreen> {
       default:
         return '今日';
     }
+  }
+
+  Widget _buildScreen(int index) {
+    switch (index) {
+      case 1:
+        return const TasksScreen();
+      case 2:
+        return const AgentScreen();
+      default:
+        return const DashboardScreen();
+    }
+  }
+}
+
+class _LazyTabHost extends StatefulWidget {
+  const _LazyTabHost({required this.index, required this.builder});
+
+  final int index;
+  final Widget Function(int index) builder;
+
+  @override
+  State<_LazyTabHost> createState() => _LazyTabHostState();
+}
+
+class _LazyTabHostState extends State<_LazyTabHost> {
+  final Map<int, Widget> _cache = {};
+
+  @override
+  Widget build(BuildContext context) {
+    _cache.putIfAbsent(widget.index, () => widget.builder(widget.index));
+    return Stack(
+      children: _cache.entries
+          .map(
+            (entry) => _IndexedTabView(
+              isActive: entry.key == widget.index,
+              child: entry.value,
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+}
+
+class _IndexedTabView extends StatelessWidget {
+  const _IndexedTabView({required this.isActive, required this.child});
+
+  final bool isActive;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Offstage(
+      offstage: !isActive,
+      child: TickerMode(
+        enabled: isActive,
+        child: child,
+      ),
+    );
   }
 }

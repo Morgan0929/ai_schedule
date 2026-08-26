@@ -9,13 +9,13 @@ import html as html_lib
 from datetime import date, datetime
 from urllib.parse import urljoin, urlparse
 
-import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crawler_service.models.crawl_model import CrawlDataModel
 from timeline_service.models.schedule_model import ScheduleModel, get_current_semester
 from timeline_service.repository.schedule_repo import ScheduleRepository
+from common.utils.http_client import get_response
 
 
 COURSE_LINK_WORDS = ("课表", "课程表", "我的课程", "个人课表", "学生课表", "课程查询")
@@ -151,57 +151,62 @@ async def crawl_schedule_page(url: str) -> dict:
         )
     }
     try:
-        async with httpx.AsyncClient(
+        response = await get_response(
+            "crawler",
+            url,
+            timeout=25.0,
             headers=headers,
             follow_redirects=True,
-            timeout=httpx.Timeout(25.0),
-        ) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            html = response.text
-            final_url = str(response.url)
-            await _validate_public_url(final_url)
-            soup = BeautifulSoup(html, "lxml")
+        )
+        html = response.text
+        final_url = str(response.url)
+        await _validate_public_url(final_url)
+        soup = BeautifulSoup(html, "lxml")
 
-            courses = extract_courses_from_html(html)
-            if courses:
-                return _imported(courses, final_url)
+        courses = extract_courses_from_html(html)
+        if courses:
+            return _imported(courses, final_url)
 
-            candidates = find_schedule_links(soup, final_url)
-            if _looks_like_login_page(soup, final_url) and not candidates:
+        candidates = find_schedule_links(soup, final_url)
+        if _looks_like_login_page(soup, final_url) and not candidates:
+            return {
+                "status": "LOGIN_REQUIRED",
+                "message": "该网址需要登录后才能读取课表。请先在学校教务系统完成登录，再提供可访问的课表页面地址。",
+                "courses": [],
+                "menu_url": None,
+            }
+
+        for candidate in candidates[:6]:
+            await _validate_same_host(final_url, candidate)
+            page_response = await get_response(
+                "crawler",
+                candidate,
+                timeout=25.0,
+                headers=headers,
+                follow_redirects=True,
+            )
+            page_html = page_response.text
+            page_url = str(page_response.url)
+            await _validate_same_host(final_url, page_url)
+            page_soup = BeautifulSoup(page_html, "lxml")
+            if _looks_like_login_page(page_soup, page_url):
                 return {
                     "status": "LOGIN_REQUIRED",
-                    "message": "该网址需要登录后才能读取课表。请先在学校教务系统完成登录，再提供可访问的课表页面地址。",
+                    "message": "已找到课表入口，但访问时跳转到了登录页。请先完成学校登录。",
                     "courses": [],
-                    "menu_url": None,
+                    "menu_url": candidate,
                 }
+            courses = extract_courses_from_html(page_html)
+            if courses:
+                return _imported(courses, page_url)
 
-            for candidate in candidates[:6]:
-                await _validate_same_host(final_url, candidate)
-                page = await client.get(candidate)
-                page.raise_for_status()
-                page_html = page.text
-                page_url = str(page.url)
-                await _validate_same_host(final_url, page_url)
-                page_soup = BeautifulSoup(page_html, "lxml")
-                if _looks_like_login_page(page_soup, page_url):
-                    return {
-                        "status": "LOGIN_REQUIRED",
-                        "message": "已找到课表入口，但访问时跳转到了登录页。请先完成学校登录。",
-                        "courses": [],
-                        "menu_url": candidate,
-                    }
-                courses = extract_courses_from_html(page_html)
-                if courses:
-                    return _imported(courses, page_url)
-
-            return {
-                "status": "NOT_FOUND",
-                "message": "页面可以访问，但没有识别到课表菜单或课程表格。请填写登录后的具体课表页面地址。",
-                "courses": [],
-                "menu_url": candidates[0] if candidates else None,
-            }
-    except httpx.HTTPError as exc:
+        return {
+            "status": "NOT_FOUND",
+            "message": "页面可以访问，但没有识别到课表菜单或课程表格。请填写登录后的具体课表页面地址。",
+            "courses": [],
+            "menu_url": candidates[0] if candidates else None,
+        }
+    except Exception as exc:
         return {
             "status": "FAILED",
             "message": f"访问课表网址失败：{exc}",

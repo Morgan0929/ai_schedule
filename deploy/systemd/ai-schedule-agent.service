@@ -1,0 +1,19 @@
+[Unit]
+Description=AI Schedule agent service
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ai-schedule
+WorkingDirectory=/srv/ai-schedule/backend
+EnvironmentFile=/srv/ai-schedule/.env
+ExecStart=/srv/ai-schedule/backend/venv/bin/python -m uvicorn agent_service.main:app --host 127.0.0.1 --port 8002
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

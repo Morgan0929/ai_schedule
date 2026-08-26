@@ -1,0 +1,86 @@
+# Temporary HTTP gateway for validation by public IP.
+# Replace this with ai-schedule.conf.example after a real domain points to the ECS.
+
+upstream ai_schedule_app {
+    server 127.0.0.1:8000;
+}
+
+upstream ai_schedule_crawler {
+    server 127.0.0.1:8001;
+}
+
+upstream ai_schedule_agent {
+    server 127.0.0.1:8002;
+}
+
+upstream ai_schedule_timeline {
+    server 127.0.0.1:8003;
+}
+
+upstream ai_schedule_rag {
+    server 127.0.0.1:8004;
+}
+
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    client_max_body_size 20m;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location = /health {
+        proxy_pass http://ai_schedule_app/health;
+        include /etc/nginx/proxy_params;
+    }
+
+    location /api/v1/auth/ {
+        proxy_pass http://ai_schedule_app;
+        include /etc/nginx/proxy_params;
+    }
+
+    location /api/v1/users {
+        proxy_pass http://ai_schedule_app;
+        include /etc/nginx/proxy_params;
+    }
+
+    location /api/v1/agent/ {
+        proxy_pass http://ai_schedule_agent;
+        include /etc/nginx/proxy_params;
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+    }
+
+    location /api/v1/todos {
+        proxy_pass http://ai_schedule_agent;
+        include /etc/nginx/proxy_params;
+        proxy_read_timeout 120s;
+    }
+
+    location /api/v1/crawl/ {
+        proxy_pass http://ai_schedule_crawler;
+        include /etc/nginx/proxy_params;
+        proxy_read_timeout 120s;
+    }
+
+    location /api/v1/rag/ {
+        proxy_pass http://ai_schedule_rag;
+        include /etc/nginx/proxy_params;
+        proxy_read_timeout 120s;
+    }
+
+    location /api/v1/ {
+        proxy_pass http://ai_schedule_timeline;
+        include /etc/nginx/proxy_params;
+        proxy_read_timeout 120s;
+    }
+
+    location /media/ {
+        proxy_pass http://ai_schedule_timeline;
+        include /etc/nginx/proxy_params;
+    }
+}

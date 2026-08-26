@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Depends, Query
+from fastapi import FastAPI, Request, Depends, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,32 +17,41 @@ from common.database import get_db, init_db
 from common.exceptions import AppException, UnauthorizedException
 from common.schemas.response import Result, PageResult
 from common.schemas.user import UserCreateDTO, UserLoginDTO
+from common.utils.auth_session import get_login_session, delete_login_session
+from common.utils.jwt import decode_access_token
 
 from app_service.services.user_service import UserService
+
+# Register shared ORM models before init_db() runs.
+import app_service.models.user_model  # noqa: F401
+import timeline_service.models.task_model  # noqa: F401
+import timeline_service.models.schedule_model  # noqa: F401
+import crawler_service.models.crawl_model  # noqa: F401
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时建表，关闭时释放资源"""
     await init_db()
-    # 创建默认 admin 账号
+    # Create the bootstrap account only when explicitly configured.
     from app_service.models.user_model import UserModel
     from common.utils.password import hash_password
     from common.database import async_session_factory
-    async with async_session_factory() as db:
-        from app_service.repository.user_repo import UserRepository
-        repo = UserRepository(db)
-        existing = await repo.find_by_username("admin")
-        if not existing:
-            admin = UserModel(
-                username="admin",
-                email="admin@example.com",
-                password_hash=hash_password("<CHANGE_ME>"),
-                role="ADMIN",
-            )
-            db.add(admin)
-            await db.commit()
-            print("[Init] 默认 admin 账号已创建 (admin / <CHANGE_ME>)")
+    if settings.BOOTSTRAP_ADMIN_USERNAME and settings.BOOTSTRAP_ADMIN_PASSWORD:
+        async with async_session_factory() as db:
+            from app_service.repository.user_repo import UserRepository
+            repo = UserRepository(db)
+            existing = await repo.find_by_username(settings.BOOTSTRAP_ADMIN_USERNAME)
+            if not existing:
+                admin = UserModel(
+                    username=settings.BOOTSTRAP_ADMIN_USERNAME,
+                    email=settings.BOOTSTRAP_ADMIN_EMAIL or None,
+                    password_hash=hash_password(settings.BOOTSTRAP_ADMIN_PASSWORD),
+                    role="ADMIN",
+                )
+                db.add(admin)
+                await db.commit()
+                print(f"[Init] bootstrap admin created: {settings.BOOTSTRAP_ADMIN_USERNAME}")
     yield
 
 
@@ -55,8 +64,8 @@ app = FastAPI(
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=settings.cors_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -104,15 +113,42 @@ async def login(dto: UserLoginDTO, db: AsyncSession = Depends(get_db)):
     return Result.success(result.model_dump())
 
 
+@app.post("/api/v1/auth/logout", response_model=Result)
+async def logout(authorization: str | None = Header(default=None, alias="Authorization")):
+    """退出登录并删除 Redis 会话。"""
+    if authorization and authorization.startswith("Bearer "):
+        payload = decode_access_token(authorization.removeprefix("Bearer ").strip())
+        if payload and payload.get("sid"):
+            await delete_login_session(payload["sid"])
+    return Result.success(None, "已退出登录")
+
+
 @app.get("/api/v1/users/me", response_model=Result)
 async def get_current_user_info(
-    user_id: int = Query(..., description="用户 ID（后续改为 JWT 解析）"),
-    db: AsyncSession = Depends(get_db),
+    authorization: str | None = Header(default=None, alias="Authorization"),
 ):
-    """获取当前用户信息（临时用 user_id 参数，后续从 JWT 解析）"""
-    service = UserService(db)
-    user = await service.get_user(user_id)
-    return Result.success(user.model_dump())
+    """获取当前用户信息，优先从 JWT + Redis 会话解析。"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise UnauthorizedException("请先登录")
+
+    token = authorization.removeprefix("Bearer ").strip()
+    payload = decode_access_token(token)
+    if not payload:
+        raise UnauthorizedException("登录已过期")
+
+    session_id = payload.get("sid")
+    if not session_id:
+        raise UnauthorizedException("登录已过期")
+
+    session = await get_login_session(session_id)
+    if not session:
+        raise UnauthorizedException("登录已过期")
+
+    user = session.get("user") or {}
+    if str(user.get("id")) != str(payload.get("sub")):
+        raise UnauthorizedException("登录已失效")
+
+    return Result.success(user)
 
 
 @app.get("/api/v1/users", response_model=Result)

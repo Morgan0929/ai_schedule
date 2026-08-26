@@ -25,3 +25,11 @@ backend/.env
 backend/uploads/
 dev.db
 backend/dev.db
+
+# Migration backups (contain DB/Redis dumps with personal data)
+migration-backup-*/
+migration-backup-*.zip
+migration-backup-*.zip.sha256
+
+# Dev acceptance screenshots
+codex_*.png

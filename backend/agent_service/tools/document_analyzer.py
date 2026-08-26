@@ -13,6 +13,7 @@ Document Analyzer Tool — 文档图像分析
 import base64
 import logging
 from typing import Any
+from common.utils.llm_guard import guarded_llm_call
 
 logger = logging.getLogger(__name__)
 
@@ -159,10 +160,14 @@ class DocumentAnalyzer:
                 ]},
             ]
 
-            resp = await client.chat.completions.create(
-                model=Settings().DEEPSEEK_MODEL, messages=messages,
-                temperature=0.3, max_tokens=2048,
-                response_format={"type": "json_object"},
+            resp = await guarded_llm_call(
+                "vision",
+                lambda: client.chat.completions.create(
+                    model=Settings().DEEPSEEK_MODEL, messages=messages,
+                    temperature=0.3, max_tokens=2048,
+                    response_format={"type": "json_object"},
+                ),
+                timeout=30.0,
             )
             raw = resp.choices[0].message.content.strip()
 

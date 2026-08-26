@@ -6,6 +6,7 @@
 from typing import Any
 from datetime import date, datetime, timedelta
 from common.database import async_session_factory, Base, engine
+from common.utils.http_client import get_json
 
 # 确保所有 ORM 模型已注册到 Base.metadata
 import timeline_service.models  # noqa: F401
@@ -382,12 +383,8 @@ async def query_weather(user_id: int, city: str = "北京", date: str = None,
 
     # ── Fallback: wttr.in ──
     try:
-        import httpx
         url = f"https://wttr.in/{city}?format=j1"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, follow_redirects=True)
-            resp.raise_for_status()
-            raw = resp.json()
+        raw = await get_json("weather", url, timeout=10.0, follow_redirects=True)
 
         current = raw.get("current_condition", [{}])[0]
         forecasts = raw.get("weather", [])
@@ -491,14 +488,19 @@ async def search_location(user_id: int, query: str) -> dict:
         query: 搜索关键词（地名/地址）
     """
     try:
-        import httpx
         url = "https://nominatim.openstreetmap.org/search"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, params={
-                "q": query, "format": "json", "limit": 5, "accept-language": "zh"
-            }, headers={"User-Agent": "AIScheduleAgent-Lin/1.0"})
-            resp.raise_for_status()
-            data = resp.json()
+        data = await get_json(
+            "search",
+            url,
+            timeout=10.0,
+            params={
+                "q": query,
+                "format": "json",
+                "limit": 5,
+                "accept-language": "zh",
+            },
+            headers={"User-Agent": "AIScheduleAgent-Lin/1.0"},
+        )
         return {
             "query": query,
             "results": [{
@@ -558,9 +560,9 @@ async def create_todo_tool(user_id: int, title: str, note: str = "",
     return await create_todo(user_id, title, note, priority)
 
 
-async def list_todos_tool(user_id: int) -> list[dict]:
+async def list_todos_tool(user_id: int, status: str = "ACTIVE") -> list[dict]:
     from agent_service.graph.todo_service import list_todos
-    return await list_todos(user_id)
+    return await list_todos(user_id, status=status)
 
 
 async def save_pending_todo_tool(user_id: int, title: str,
@@ -635,9 +637,71 @@ async def commit_pending_tool(user_id: int, ref_id: str = "",
     return await commit_pending(ref_id, user_id, overrides if overrides else None)
 
 
+SECTION_TIME_MAP = {
+    1: ("08:30", "09:15"),
+    2: ("09:20", "10:05"),
+    3: ("10:25", "11:10"),
+    4: ("11:15", "12:00"),
+    5: ("14:00", "14:45"),
+    6: ("14:50", "15:35"),
+    7: ("15:55", "16:40"),
+    8: ("16:45", "17:30"),
+    9: ("19:00", "19:45"),
+    10: ("19:50", "20:35"),
+    11: ("20:40", "21:25"),
+    12: ("21:30", "22:15"),
+}
+
+
+def _course_time_for_date(course, target_date: date) -> tuple[datetime, datetime]:
+    """Return concrete datetimes for a schedule row on a target date."""
+    if course.start_time:
+        start_dt = datetime.combine(target_date, course.start_time)
+    else:
+        section_start = course.start_section or 1
+        start_clock = SECTION_TIME_MAP.get(section_start, ("08:30", "09:15"))[0]
+        start_dt = datetime.fromisoformat(f"{target_date.isoformat()}T{start_clock}:00")
+
+    if course.end_time:
+        end_dt = datetime.combine(target_date, course.end_time)
+    else:
+        section_end = course.end_section or course.start_section or 1
+        end_clock = SECTION_TIME_MAP.get(section_end, ("08:30", "09:15"))[1]
+        end_dt = datetime.fromisoformat(f"{target_date.isoformat()}T{end_clock}:00")
+
+    if end_dt <= start_dt:
+        end_dt = start_dt + timedelta(minutes=45)
+    return start_dt, end_dt
+
+
+def _course_to_calendar_event(course, target_date: date) -> dict:
+    start_dt, end_dt = _course_time_for_date(course, target_date)
+    section_label = ""
+    if course.start_section:
+        if course.end_section and course.end_section != course.start_section:
+            section_label = f"第{course.start_section}-{course.end_section}节"
+        else:
+            section_label = f"第{course.start_section}节"
+    return {
+        "id": f"course:{course.id}:{target_date.isoformat()}",
+        "title": course.course_name,
+        "start_time": start_dt.isoformat(),
+        "end_time": end_dt.isoformat(),
+        "location": course.location,
+        "teacher": course.teacher,
+        "category": "COURSE",
+        "source": "course",
+        "course_id": course.id,
+        "start_section": course.start_section,
+        "end_section": course.end_section,
+        "section_label": section_label,
+        "semester": course.semester,
+    }
+
+
 async def _query_calendar_shared(user_id: int, start_time: str = None,
                                  end_time: str = None) -> list[dict]:
-    """Read tasks through the same SQLAlchemy engine used by timeline APIs."""
+    """Read tasks and imported courses for the same time range."""
     if not start_time:
         return []
     try:
@@ -647,12 +711,34 @@ async def _query_calendar_shared(user_id: int, start_time: str = None,
         return []
 
     from timeline_service.services.task_service import TaskService
+    from timeline_service.repository.schedule_repo import ScheduleRepository
 
     async with async_session_factory() as db:
         tasks, _ = await TaskService(db).list_tasks(
             user_id, start=start_dt, end=end_dt, page=1, page_size=1000
         )
-        return [task.model_dump(mode="json") for task in tasks]
+        events = []
+        for task in tasks:
+            item = task.model_dump(mode="json")
+            item.setdefault("source", "task")
+            events.append(item)
+
+        repo = ScheduleRepository(db)
+        current_day = start_dt.date()
+        last_day = end_dt.date()
+        while current_day <= last_day:
+            for course in await repo.find_by_date(user_id, current_day):
+                event = _course_to_calendar_event(course, current_day)
+                try:
+                    event_start = datetime.fromisoformat(event["start_time"])
+                    event_end = datetime.fromisoformat(event["end_time"])
+                except (TypeError, ValueError):
+                    continue
+                if event_start < end_dt and event_end > start_dt:
+                    events.append(event)
+            current_day += timedelta(days=1)
+
+        return sorted(events, key=lambda item: item.get("start_time", ""))
 
 
 async def _create_task_shared(user_id: int, title: str, start_time: str = None,

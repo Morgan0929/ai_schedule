@@ -13,7 +13,7 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController(text: 'admin');
-  final _passwordController = TextEditingController(text: '<CHANGE_ME>');
+  final _passwordController = TextEditingController();
   final _emailController = TextEditingController();
   bool _registerMode = false;
 
@@ -63,12 +63,10 @@ class _LoginScreenState extends State<LoginScreen> {
                             segments: const [
                               ButtonSegment(
                                 value: false,
-                                icon: Icon(Icons.login),
                                 label: Text('登录'),
                               ),
                               ButtonSegment(
                                 value: true,
-                                icon: Icon(Icons.person_add_alt_1),
                                 label: Text('注册'),
                               ),
                             ],
@@ -84,10 +82,11 @@ class _LoginScreenState extends State<LoginScreen> {
                             controller: _usernameController,
                             decoration: const InputDecoration(
                               labelText: '用户名',
-                              prefixIcon: Icon(Icons.person_outline),
                             ),
                             validator: (value) =>
-                                value == null || value.trim().isEmpty ? '请输入用户名' : null,
+                                value == null || value.trim().isEmpty
+                                    ? '请输入用户名'
+                                    : null,
                           ),
                           const SizedBox(height: 12),
                           TextFormField(
@@ -95,10 +94,11 @@ class _LoginScreenState extends State<LoginScreen> {
                             obscureText: true,
                             decoration: const InputDecoration(
                               labelText: '密码',
-                              prefixIcon: Icon(Icons.lock_outline),
                             ),
                             validator: (value) =>
-                                value == null || value.length < 6 ? '密码至少 6 位' : null,
+                                value == null || value.length < 6
+                                    ? '密码至少 6 位'
+                                    : null,
                           ),
                           if (_registerMode) ...[
                             const SizedBox(height: 12),
@@ -107,21 +107,20 @@ class _LoginScreenState extends State<LoginScreen> {
                               keyboardType: TextInputType.emailAddress,
                               decoration: const InputDecoration(
                                 labelText: '邮箱',
-                                prefixIcon: Icon(Icons.mail_outline),
                               ),
                             ),
                           ],
                           const SizedBox(height: 18),
-                          FilledButton.icon(
+                          FilledButton(
                             onPressed: state.busy ? null : _submit,
-                            icon: state.busy
+                            child: state.busy
                                 ? const SizedBox(
                                     width: 18,
                                     height: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
                                   )
-                                : Icon(_registerMode ? Icons.person_add_alt_1 : Icons.login),
-                            label: Text(_registerMode ? '创建账号' : '进入'),
+                                : Text(_registerMode ? '创建账号' : '进入'),
                           ),
                         ],
                       ),

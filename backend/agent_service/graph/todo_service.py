@@ -36,7 +36,7 @@ async def create_todo(user_id: int, title: str, note: str = "",
             "SELECT count(*) FROM todo_queue WHERE user_id=$1 AND status='ACTIVE'", user_id)
         if active_count >= MAX_ACTIVE:
             oldest = await conn.fetchval(
-                "UPDATE todo_queue SET status='ARCHIVED' WHERE id = ("
+                "UPDATE todo_queue SET status='ARCHIVED', updated_at=NOW() WHERE id = ("
                 "SELECT id FROM todo_queue WHERE user_id=$1 AND status='ACTIVE' "
                 "ORDER BY created_at ASC LIMIT 1) RETURNING title", user_id)
             logger.info(f"Todo FIFO: archived '{oldest}'")
@@ -63,6 +63,25 @@ async def list_todos(user_id: int, status: str = "ACTIVE") -> list[dict]:
                  "priority": r["priority"], "status": r["status"],
                  "remind_count": r["remind_count"],
                  "created_at": str(r["created_at"])[:10]}
+                for r in rows]
+    finally:
+        await conn.close()
+
+
+async def list_todo_history(user_id: int, limit: int = 50) -> list[dict]:
+    """查看已完成和已归档待办历史。"""
+    conn = await _get_conn()
+    try:
+        rows = await conn.fetch(
+            "SELECT id, title, note, priority, status, remind_count, created_at, updated_at "
+            "FROM todo_queue WHERE user_id=$1 AND status IN ('DONE', 'ARCHIVED') "
+            "ORDER BY COALESCE(updated_at, created_at) DESC LIMIT $2",
+            user_id, limit)
+        return [{"id": r["id"], "title": r["title"], "note": r["note"],
+                 "priority": r["priority"], "status": r["status"],
+                 "remind_count": r["remind_count"],
+                 "created_at": str(r["created_at"])[:10],
+                 "updated_at": str(r["updated_at"])[:10] if r["updated_at"] else None}
                 for r in rows]
     finally:
         await conn.close()

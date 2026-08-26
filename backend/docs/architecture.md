@@ -1,7 +1,7 @@
 # 林 (Lin) — Agent 架构文档
 
-> 最后更新: 2026-08-05
-> 涵盖: 实体模型 / 工作记忆 / 冲突解决 / 所有已修复 Bug
+> 最后更新: 2026-08-13
+> 涵盖: 实体模型 / 工作记忆 / 冲突解决 / 课表导入 / Git 工作流 / 所有已修复 Bug
 
 ---
 
@@ -217,3 +217,52 @@ _handle_confirm("确认")
 5. **Commit 从 options 重建 actions** — 不依赖 proposed_actions (Redis 往返可能丢失)
 6. **waiting_confirm 是锁** — 只接受 确认/取消/修改方案, 不接受新事件
 7. **三层选项结构** — label (展示) / preview (预览) / actions (执行) 完全解耦
+
+---
+
+## 八、课表网页登录导入架构
+
+```
+Flutter WebView
+  │
+  ├─ 用户登录教务系统
+  ├─ 自动扫描并点击课表入口
+  ├─ 采集 document HTML / 同源 iframe / 可见文本
+  ├─ 合成 data-codex-clickable-controls
+  ├─ 合成 data-codex-visual-courses
+  └─ 合成 data-codex-visual-headers
+          │
+          ▼
+crawler_service /schedule/from-html
+  │
+  ├─ 标准列式表格解析
+  ├─ 矩阵课表解析
+  ├─ 视觉课程卡片解析
+  └─ ScheduleRepository.save_batch → SQL schedule
+```
+
+设计要点：
+
+1. WebView 入口扫描不只识别 `<button>`，还读取 `a/button/input/span/div/li`、`onclick`、`role=button`、`title`、`aria-label`、`id`、`class` 和可见文字。
+2. App 能看到页面，不代表 JS 能读到 DOM。跨域 iframe、canvas、图片课表需要后续截图/OCR兜底。
+3. 后端优先从内容提取课程，再判断登录页，避免登录 URL 或残留登录 DOM 覆盖已识别课表。
+4. 视觉卡片通过 `left/top/width/height` 映射星期和节次，星期/日期表头优先用于真实周几映射。
+
+---
+
+## 九、Git 工作流
+
+```
+codex/<功能或问题名>  →  开发 / 测试 / 修 bug / 过程提交
+        │
+        │ 验证通过
+        ▼
+main                  →  已完成且可作为稳定主线的功能或修复
+```
+
+规则：
+
+1. `main` 只接收已完成并验证通过的功能或 Bug 修复。
+2. 规划、测试、修 Bug 的过程提交都放在支线。
+3. 每次提交只 stage 当前任务相关文件。
+4. 工作树有用户已有改动时，不回滚、不混提交；必要时先说明文件归属。

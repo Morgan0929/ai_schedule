@@ -17,7 +17,9 @@ class DeleteEventTest(unittest.TestCase):
         result = asyncio.run(
             input_classifier_node({"user_input": "把明天去图书馆的日程删了"})
         )
-        self.assertEqual(result, {})
+        self.assertEqual(result["intent"], "delete_event")
+        self.assertTrue(result["_skip_planner"])
+        self.assertEqual(result["sub_tasks"][0]["action"], "delete_task")
 
     def test_delete_request_extracts_title_and_time_range(self):
         result = _detect_event_statement("把明天去图书馆的日程删了")

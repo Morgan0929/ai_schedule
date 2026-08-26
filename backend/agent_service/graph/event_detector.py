@@ -8,8 +8,32 @@ Event Detector Node — 规则引擎优先, 日程类确定任务不浪费 LLM
   low confidence / chat      → 进入 planner (LLM)
 """
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
+
+
+SPECIAL_DATE_WORDS = ('生日', '纪念日', '节日', '周年', '忌日')
+TODO_QUERY_WORDS = ('待办', '代办', 'todo', 'to-do')
+
+
+def is_out_of_scope_request(text: str) -> bool:
+    """识别明显不属于个人事务秘书范围的请求。"""
+    normalized = (text or "").strip().lower()
+    out_of_scope = [
+        '写代码', '写程序', '写一段', '写个函数', '二分查找', '算法', '编程',
+        'debug', 'bug', '代码', '程序', 'python', 'java', 'javascript', 'dart',
+        '解释一下', '什么是', '讲个笑话', '写诗', '写小说', '写故事',
+        '推荐一部电影', '怎么学', '学好英语', '翻译', '数学题', '物理题',
+        '化学题', '法律', '诊断', '心理咨询',
+    ]
+    return any(word in normalized for word in out_of_scope)
+
+
+def out_of_scope_reply() -> str:
+    return (
+        "我理解你的需求，不过我主要负责日程、待办、提醒、天气和冲突处理。\n"
+        "这类写代码或知识讲解的问题不在我的工作范围内，我就不替你处理了。"
+    )
 
 
 def _normalize_time_aliases(text: str) -> str:
@@ -35,6 +59,7 @@ def extract_event_title(text: str) -> str:
     "后天上午10点客户沟通"     → "客户沟通"
     "帮我安排周五晚上的会议"   → "会议"
     "明天晚上我要看电影"       → "看电影"
+    "明天早上八点和朋友吃早餐" → "和朋友吃早餐"
     "下午2点提醒我开会"        → "开会"
     """
     result = _normalize_time_aliases(text)
@@ -63,7 +88,9 @@ def extract_event_title(text: str) -> str:
         r'下周[一二三四五六日]',
         r'周[一二三四五六日]',
         # 未来日期 "8月15号"
+        r'\d{1,2}\s*[.\-/]\s*\d{1,2}',
         r'\d{1,2}月\d{1,2}[号日]',
+        r'(?:\d{1,2}\s*月\s*)?\d{1,2}\s*[号日]',
         # 单个时间词
         r'明天|后天|今天|下周|这周|本周|下个月|月底',
         r'下午|晚上|上午|中午|傍晚|早上|早晨',
@@ -83,8 +110,8 @@ def extract_event_title(text: str) -> str:
 
     # ── 第3步: 清理连接词/标点/空格 ──
     result = result.strip('的，,。.；;：:！!？? 、 \t\n\r')
-    # 去掉开头的连接词
-    for junk in ['把', '去', '在', '一下', '一个', '和', '跟', '与', '的']:
+    # 去掉开头的结构性虚词；人物连接词如“和/跟/与”属于标题内容。
+    for junk in ['把', '去', '在', '一下', '一个', '的']:
         if result.startswith(junk):
             result = result[len(junk):].strip()
 
@@ -152,6 +179,12 @@ def _parse_time(text: str) -> dict:
         d = today + timedelta(days=1); date_precision = "day"
     elif '后天' in text:
         d = today + timedelta(days=2); date_precision = "day"
+    elif re.search(r'(?:月底)?(?:\d{1,2}\s*月\s*)?\d{1,2}\s*[号日]', text):
+        from agent_service.services.time_resolver import resolve_time_range
+        resolved = resolve_time_range(text)
+        if resolved.get('time_range'):
+            d = datetime.fromisoformat(resolved['time_range']['start']).date()
+            date_precision = "day"
     elif '下周' in text:
         date_precision = "week"
         for name, wd in day_names.items():
@@ -234,8 +267,73 @@ def _has_time_indicator(text: str) -> bool:
         rf'(\d{{1,2}}|{CN})点', r'\d{1,2}:\d{2}',
         r'下午', r'上午', r'晚上', r'中午', r'傍晚',
         r'\d{1,2}月\d{1,2}[号日]',
+        r'(?:\d{1,2}\s*月\s*)?\d{1,2}\s*[号日]',
     ]
     return any(re.search(pat, text) for pat in indicators)
+
+
+def _parse_numeric_month_day(text: str) -> date | None:
+    """解析 9.29 / 9-29 / 9月29日 这类月日。"""
+    match = re.search(r'(?<!\d)(\d{1,2})\s*(?:[.\-/月])\s*(\d{1,2})\s*(?:号|日)?(?!\d)', text)
+    if not match:
+        return None
+    month = int(match.group(1))
+    day = int(match.group(2))
+    today = date.today()
+    try:
+        target = date(today.year, month, day)
+    except ValueError:
+        return None
+    if target < today:
+        target = date(today.year + 1, month, day)
+    return target
+
+
+def _detect_special_date_reminder(text: str) -> dict[str, Any] | None:
+    """生日/纪念日/节日等日期提醒，默认当天 09:00 提醒。"""
+    target_date = _parse_numeric_month_day(text)
+    if not target_date or not any(word in text for word in SPECIAL_DATE_WORDS):
+        return None
+
+    title = extract_event_title(text)
+    if not title:
+        title = next((word for word in SPECIAL_DATE_WORDS if word in text), '提醒')
+    title = title.replace('我生日', '我的生日').replace('我的的生日', '我的生日')
+    start = datetime(target_date.year, target_date.month, target_date.day, 9, 0)
+    end = start + timedelta(hours=1)
+    entities = {
+        'title': title,
+        'type': 'POINT',
+        'time_range': {'start': start.isoformat(), 'end': end.isoformat()},
+        'start_time': start.isoformat(),
+        'end_time': end.isoformat(),
+        'date': target_date.isoformat(),
+        'need_info': [],
+        'reminder_type': 'special_date',
+    }
+    return {
+        'intent': 'create_event',
+        'sub_tasks': [{'action': 'check_calendar', 'params': entities}],
+        '_pending_event': entities,
+        'confidence': 0.90,
+        'source': 'special_date_detector',
+        '_skip_planner': True,
+    }
+
+
+def _detect_todo_query(text: str) -> dict[str, Any] | None:
+    """查询待办队列。兼容“代办”错别字。"""
+    if not any(word in text.lower() for word in TODO_QUERY_WORDS):
+        return None
+    if not _is_query(text):
+        return None
+    return {
+        'intent': 'query_todos',
+        'sub_tasks': [{'action': 'list_todos', 'params': {'status': 'ACTIVE'}}],
+        'confidence': 0.88,
+        'source': 'todo_query_detector',
+        '_skip_planner': True,
+    }
 
 
 def _is_event_like(text: str) -> bool:
@@ -466,6 +564,8 @@ def _detect_weather_query(text: str) -> dict[str, Any] | None:
     """天气查询 → 三层解析: Location / Date / QueryType"""
     if not any(keyword in text for keyword in WEATHER_KEYWORDS):
         return None
+    if not _is_query(text) and not any(word in text for word in ('查', '看', '下雨', '几度', '多少度')):
+        return None
 
     # ═══ Step 1: 清洗时间噪声 ═══
     cleaned = _clean_time_noise(text)
@@ -509,6 +609,20 @@ def _detect_event_statement(text: str) -> dict[str, Any]:
          都没有                     → chat (进 planner)
     """
     text = _normalize_time_aliases(text)
+    if is_out_of_scope_request(text):
+        return {
+            'intent': 'chat',
+            'sub_tasks': [],
+            'final_reply': out_of_scope_reply(),
+            'confidence': 0.95,
+            'source': 'out_of_scope_guard',
+            '_skip_planner': True,
+        }
+
+    todo_query = _detect_todo_query(text)
+    if todo_query:
+        return todo_query
+
     mutation = _detect_mutation_statement(text)
     if mutation:
         return mutation
@@ -516,6 +630,10 @@ def _detect_event_statement(text: str) -> dict[str, Any]:
     weather = _detect_weather_query(text)
     if weather:
         return weather
+
+    special_date = _detect_special_date_reminder(text)
+    if special_date:
+        return special_date
 
     has_time = _has_time_indicator(text)
     is_query = _is_query(text)

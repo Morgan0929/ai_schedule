@@ -8,6 +8,7 @@ import httpx
 from datetime import datetime
 from bs4 import BeautifulSoup
 from crawler_service.spiders.base import BaseSpider, SpiderResult
+from common.utils.http_client import get_response
 
 
 class NewsSpider(BaseSpider):
@@ -29,12 +30,14 @@ class NewsSpider(BaseSpider):
         limit = params.get("limit", 15)
 
         try:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-                resp = await client.get(self.HN_URL, headers={
-                    "User-Agent": "Mozilla/5.0 (compatible; AI-Schedule-Agent/1.0)"
-                })
-                resp.raise_for_status()
-                html = resp.text
+            resp = await get_response(
+                "news",
+                self.HN_URL,
+                timeout=15.0,
+                follow_redirects=True,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; AI-Schedule-Agent/1.0)"},
+            )
+            html = resp.text
 
             # === BeautifulSoup 解析 HTML ===
             soup = BeautifulSoup(html, "lxml")  # 使用 lxml 解析器

@@ -2,6 +2,8 @@
 -- AI Schedule Agent 数据库初始化脚本
 -- ============================================
 
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- 用户表
 CREATE TABLE IF NOT EXISTS sys_user (
     id BIGSERIAL PRIMARY KEY,
@@ -84,6 +86,25 @@ CREATE TABLE IF NOT EXISTS agent_session (
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_session_user ON agent_session(user_id, is_active);
+
+-- Agent 待办队列
+CREATE TABLE IF NOT EXISTS todo_queue (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES sys_user(id) ON DELETE CASCADE,
+    title VARCHAR(256) NOT NULL,
+    note TEXT DEFAULT '',
+    priority VARCHAR(16) DEFAULT 'MEDIUM'
+        CHECK (priority IN ('HIGH', 'MEDIUM', 'LOW')),
+    status VARCHAR(16) DEFAULT 'ACTIVE'
+        CHECK (status IN ('ACTIVE', 'DONE', 'ARCHIVED')),
+    remind_count INTEGER DEFAULT 0,
+    max_remind INTEGER DEFAULT 3,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_todo_queue_user_status
+    ON todo_queue(user_id, status);
 
 -- 爬虫数据表
 CREATE TABLE IF NOT EXISTS crawl_data (

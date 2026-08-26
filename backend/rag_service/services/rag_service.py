@@ -92,6 +92,15 @@ class EmbeddingService:
 
 
 class RagService:
+    @staticmethod
+    def get_stats() -> dict:
+        """Return lightweight RAG service status without opening a DB connection."""
+        return {
+            "embedding_dim": EmbeddingService.dimension(),
+            "backend": "pgvector",
+            "channels": ["document", "memory"],
+        }
+
     """RAG 服务 — Document + Memory 双通道"""
 
     @staticmethod

@@ -22,6 +22,11 @@ from crawler_service.models.crawl_model import CrawlTriggerRequest
 from crawler_service.services.crawl_service import CrawlService
 from crawler_service.utils.scheduler import start_scheduler, stop_scheduler
 
+# Register shared ORM models before init_db() runs.
+import app_service.models.user_model  # noqa: F401
+import timeline_service.models.task_model  # noqa: F401
+import timeline_service.models.schedule_model  # noqa: F401
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -45,8 +50,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=settings.cors_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -139,7 +144,7 @@ async def get_latest(source: str, db: AsyncSession = Depends(get_db)):
 
 
 # ============ 课表刷新 API ============
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 
 
 class ScheduleRefreshRequest(BaseModel):
@@ -148,6 +153,48 @@ class ScheduleRefreshRequest(BaseModel):
     courses: list[dict] = Field(..., description="课程列表")
     source: str = Field(default="gdut", description="数据来源")
     semester: str | None = Field(None, description="学期（为空则取当前学期）")
+
+
+class ScheduleUrlImportRequest(BaseModel):
+    """从教务系统页面发现并导入课表。"""
+    user_id: int = Field(..., gt=0, description="用户 ID")
+    url: HttpUrl = Field(..., description="教务系统或课表页面网址")
+
+
+class ScheduleHtmlImportRequest(BaseModel):
+    """从 App 内置浏览器读取到的课表 HTML 导入课表。"""
+    user_id: int = Field(..., gt=0, description="用户 ID")
+    html: str = Field(..., min_length=20, description="课表页面 HTML")
+    source_url: str | None = Field(None, max_length=2048, description="当前页面网址")
+
+
+@app.post("/api/v1/crawl/schedule/from-url", response_model=Result)
+async def import_schedule_from_url(
+    request: ScheduleUrlImportRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    from crawler_service.services.schedule_import_service import ScheduleImportService
+
+    result = await ScheduleImportService(db).import_from_url(
+        user_id=request.user_id,
+        url=str(request.url),
+    )
+    return Result.success(result)
+
+
+@app.post("/api/v1/crawl/schedule/from-html", response_model=Result)
+async def import_schedule_from_html(
+    request: ScheduleHtmlImportRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    from crawler_service.services.schedule_import_service import ScheduleImportService
+
+    result = await ScheduleImportService(db).import_from_html(
+        user_id=request.user_id,
+        html=request.html,
+        source_url=str(request.source_url) if request.source_url else "",
+    )
+    return Result.success(result)
 
 
 @app.post("/api/v1/crawl/schedule/refresh", response_model=Result)

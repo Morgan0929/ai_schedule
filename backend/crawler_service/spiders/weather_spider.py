@@ -6,6 +6,7 @@
 """
 import httpx
 from crawler_service.spiders.base import BaseSpider, SpiderResult
+from common.utils.http_client import get_json
 
 
 class WeatherSpider(BaseSpider):
@@ -29,10 +30,7 @@ class WeatherSpider(BaseSpider):
         url = f"https://wttr.in/{city}?format=j1&days={days}"
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(url, follow_redirects=True)
-                resp.raise_for_status()
-                raw = resp.json()
+            raw = await get_json("weather", url, timeout=15.0, follow_redirects=True)
 
             # 提取关键信息
             weather_data = self._extract_weather(raw, city)

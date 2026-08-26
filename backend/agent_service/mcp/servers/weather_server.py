@@ -7,6 +7,8 @@ MCP Weather Server — 天气查询
 import json
 import logging
 
+from common.utils.http_client import get_json
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,12 +64,8 @@ class WeatherMCPServer:
     async def _get_current(self, args: dict) -> str:
         city = args.get("city", "Beijing")
         try:
-            import httpx
             url = f"https://wttr.in/{city}?format=j1"
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, follow_redirects=True)
-                resp.raise_for_status()
-                raw = resp.json()
+            raw = await get_json("weather", url, timeout=10.0, follow_redirects=True)
             current = raw.get("current_condition", [{}])[0]
             return json.dumps({
                 "city": city,
@@ -83,12 +81,8 @@ class WeatherMCPServer:
         city = args.get("city", "Beijing")
         days = min(args.get("days", 2), 3)
         try:
-            import httpx
             url = f"https://wttr.in/{city}?format=j1"
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, follow_redirects=True)
-                resp.raise_for_status()
-                raw = resp.json()
+            raw = await get_json("weather", url, timeout=10.0, follow_redirects=True)
             forecasts = raw.get("weather", [])[:days]
             daily = []
             for f in forecasts:

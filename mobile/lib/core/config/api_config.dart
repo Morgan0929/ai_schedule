@@ -6,22 +6,27 @@ class ApiConfig {
     required this.crawlerServiceUrl,
   });
 
+  static const _apiBaseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://localhost',
+  );
+
   static const current = ApiConfig(
     appServiceUrl: String.fromEnvironment(
       'APP_SERVICE_URL',
-      defaultValue: 'http://10.0.2.2:8000',
+      defaultValue: _apiBaseUrl,
     ),
     agentServiceUrl: String.fromEnvironment(
       'AGENT_SERVICE_URL',
-      defaultValue: 'http://10.0.2.2:8002',
+      defaultValue: _apiBaseUrl,
     ),
     timelineServiceUrl: String.fromEnvironment(
       'TIMELINE_SERVICE_URL',
-      defaultValue: 'http://10.0.2.2:8003',
+      defaultValue: _apiBaseUrl,
     ),
     crawlerServiceUrl: String.fromEnvironment(
       'CRAWLER_SERVICE_URL',
-      defaultValue: 'http://10.0.2.2:8001',
+      defaultValue: _apiBaseUrl,
     ),
   );
 
