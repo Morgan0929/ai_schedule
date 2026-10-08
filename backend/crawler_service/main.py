@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from common.utils.authentication import get_authenticated_user_id, check_requested_user_id
 from common.config import settings
 from common.database import get_db, init_db, async_session_factory
 from common.exceptions import AppException
@@ -149,7 +150,7 @@ from pydantic import BaseModel, Field, HttpUrl
 
 class ScheduleRefreshRequest(BaseModel):
     """课表刷新请求"""
-    user_id: int = Field(..., description="用户 ID")
+    user_id: int | None = Field(None, gt=0, description="用户 ID（兼容旧客户端）")
     courses: list[dict] = Field(..., description="课程列表")
     source: str = Field(default="gdut", description="数据来源")
     semester: str | None = Field(None, description="学期（为空则取当前学期）")
@@ -157,13 +158,13 @@ class ScheduleRefreshRequest(BaseModel):
 
 class ScheduleUrlImportRequest(BaseModel):
     """从教务系统页面发现并导入课表。"""
-    user_id: int = Field(..., gt=0, description="用户 ID")
+    user_id: int | None = Field(None, gt=0, description="用户 ID（兼容旧客户端）")
     url: HttpUrl = Field(..., description="教务系统或课表页面网址")
 
 
 class ScheduleHtmlImportRequest(BaseModel):
     """从 App 内置浏览器读取到的课表 HTML 导入课表。"""
-    user_id: int = Field(..., gt=0, description="用户 ID")
+    user_id: int | None = Field(None, gt=0, description="用户 ID（兼容旧客户端）")
     html: str = Field(..., min_length=20, description="课表页面 HTML")
     source_url: str | None = Field(None, max_length=2048, description="当前页面网址")
 
@@ -171,12 +172,14 @@ class ScheduleHtmlImportRequest(BaseModel):
 @app.post("/api/v1/crawl/schedule/from-url", response_model=Result)
 async def import_schedule_from_url(
     request: ScheduleUrlImportRequest,
+    user_id: int = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     from crawler_service.services.schedule_import_service import ScheduleImportService
 
+    check_requested_user_id(request.user_id, user_id)
     result = await ScheduleImportService(db).import_from_url(
-        user_id=request.user_id,
+        user_id=user_id,
         url=str(request.url),
     )
     return Result.success(result)
@@ -185,12 +188,14 @@ async def import_schedule_from_url(
 @app.post("/api/v1/crawl/schedule/from-html", response_model=Result)
 async def import_schedule_from_html(
     request: ScheduleHtmlImportRequest,
+    user_id: int = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     from crawler_service.services.schedule_import_service import ScheduleImportService
 
+    check_requested_user_id(request.user_id, user_id)
     result = await ScheduleImportService(db).import_from_html(
-        user_id=request.user_id,
+        user_id=user_id,
         html=request.html,
         source_url=str(request.source_url) if request.source_url else "",
     )
@@ -200,6 +205,7 @@ async def import_schedule_from_html(
 @app.post("/api/v1/crawl/schedule/refresh", response_model=Result)
 async def refresh_schedule(
     request: ScheduleRefreshRequest,
+    user_id: int = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -222,7 +228,7 @@ async def refresh_schedule(
     )
     from datetime import date, timedelta
 
-    user_id = request.user_id
+    check_requested_user_id(request.user_id, user_id)
     semester = request.semester or get_current_semester()
     today = date.today()
     week_dates = [today + timedelta(days=i) for i in range(7)]
@@ -281,7 +287,7 @@ async def refresh_schedule(
 
 @app.get("/api/v1/crawl/schedule/status", response_model=Result)
 async def schedule_status(
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """

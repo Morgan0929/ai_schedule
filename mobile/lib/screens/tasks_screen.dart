@@ -77,6 +77,7 @@ class TasksScreen extends StatelessWidget {
                   child: CourseCard(
                     course: course,
                     mediaBaseUrl: state.config.timelineServiceUrl,
+                    mediaToken: state.session?.token,
                     onEdit: () => _editCourse(context, course),
                     onUploadImage: () => _uploadCourseImage(context, course),
                     onDelete: () => _confirmDeleteCourse(context, course),
@@ -89,6 +90,7 @@ class TasksScreen extends StatelessWidget {
                 child: TaskCard(
                   task: task,
                   mediaBaseUrl: state.config.timelineServiceUrl,
+                  mediaToken: state.session?.token,
                   onEdit: () => _editTask(context, task),
                   onUploadImage: () => _uploadTaskImage(context, task),
                   onComplete: () => _complete(context, task),

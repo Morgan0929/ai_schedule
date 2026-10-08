@@ -6,6 +6,7 @@ class TaskCard extends StatelessWidget {
   const TaskCard({
     required this.task,
     this.mediaBaseUrl,
+    this.mediaToken,
     this.onEdit,
     this.onUploadImage,
     this.onComplete,
@@ -15,6 +16,7 @@ class TaskCard extends StatelessWidget {
 
   final TaskItem task;
   final String? mediaBaseUrl;
+  final String? mediaToken;
   final VoidCallback? onEdit;
   final VoidCallback? onUploadImage;
   final VoidCallback? onComplete;
@@ -80,6 +82,7 @@ class TaskCard extends StatelessWidget {
               _AttachmentPreview(
                 attachment: task.attachments.first,
                 mediaBaseUrl: mediaBaseUrl,
+                mediaToken: mediaToken,
               ),
               const SizedBox(width: 6),
             ],
@@ -129,10 +132,15 @@ class TaskCard extends StatelessWidget {
 }
 
 class _AttachmentPreview extends StatelessWidget {
-  const _AttachmentPreview({required this.attachment, this.mediaBaseUrl});
+  const _AttachmentPreview({
+    required this.attachment,
+    this.mediaBaseUrl,
+    this.mediaToken,
+  });
 
   final TaskAttachment attachment;
   final String? mediaBaseUrl;
+  final String? mediaToken;
 
   @override
   Widget build(BuildContext context) {
@@ -144,6 +152,7 @@ class _AttachmentPreview extends StatelessWidget {
       borderRadius: BorderRadius.circular(6),
       child: Image.network(
         url,
+        headers: _mediaHeaders(url),
         width: 42,
         height: 42,
         fit: BoxFit.cover,
@@ -154,6 +163,22 @@ class _AttachmentPreview extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Map<String, String>? _mediaHeaders(String url) {
+    final base = Uri.tryParse(mediaBaseUrl ?? '');
+    final target = Uri.tryParse(url);
+    // Credentials are only sent to our configured media service.
+    if (mediaToken == null ||
+        mediaToken!.isEmpty ||
+        base == null ||
+        target == null ||
+        !base.hasScheme ||
+        !target.hasScheme ||
+        target.origin != base.origin) {
+      return null;
+    }
+    return {'Authorization': 'Bearer $mediaToken'};
   }
 
   String? _absoluteUrl(String value) {

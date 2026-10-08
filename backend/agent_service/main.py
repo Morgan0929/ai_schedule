@@ -9,10 +9,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
-from fastapi import Query
+from fastapi import Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from common.utils.authentication import (
+    get_authenticated_user_id, check_requested_user_id, scope_agent_session,
+)
 from common.config import settings
 from common.database import init_db
 from common.exceptions import AppException
@@ -90,16 +93,25 @@ async def health_check():
 
 # ============ Agent 对话 API（核心） ============
 @app.post("/api/v1/agent/chat", response_model=Result)
-async def agent_chat(request: AgentChatRequest):
+async def agent_chat(
+    request: AgentChatRequest, user_id: int = Depends(get_authenticated_user_id),
+):
     """
     非流式对话 — 返回完整 JSON 响应
     """
+    check_requested_user_id(request.user_id, user_id)
+    request = request.model_copy(update={
+        "user_id": user_id,
+        "session_id": scope_agent_session(request.session_id, user_id),
+    })
     response = await AgentService.chat(request)
     return Result.success(response.model_dump())
 
 
 @app.post("/api/v1/agent/chat/stream")
-async def agent_chat_stream(request: AgentChatRequest):
+async def agent_chat_stream(
+    request: AgentChatRequest, user_id: int = Depends(get_authenticated_user_id),
+):
     """
     流式对话 — SSE (Server-Sent Events) 逐 token 输出
 
@@ -109,6 +121,12 @@ async def agent_chat_stream(request: AgentChatRequest):
     """
     import json
     from fastapi.responses import StreamingResponse
+
+    check_requested_user_id(request.user_id, user_id)
+    request = request.model_copy(update={
+        "user_id": user_id,
+        "session_id": scope_agent_session(request.session_id, user_id),
+    })
 
     async def generate():
         async for event in AgentService.chat_stream(request):
@@ -142,7 +160,7 @@ async def get_mode():
 
 @app.get("/api/v1/agent/history", response_model=Result)
 async def get_agent_history(
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     session_id: str | None = Query(None, description="会话 ID（可选）"),
 ):
     from sqlalchemy import text
@@ -151,7 +169,7 @@ async def get_agent_history(
 
     async with async_session_factory() as db:
         if session_id:
-            session_key = _stable_session_uuid(session_id)
+            session_key = _stable_session_uuid(scope_agent_session(session_id, user_id))
             result = await db.execute(text(
                 "SELECT messages FROM agent_session WHERE id = :id AND user_id = :user_id"
             ), {"id": session_key, "user_id": user_id})
@@ -166,7 +184,7 @@ async def get_agent_history(
 
 @app.delete("/api/v1/agent/history", response_model=Result)
 async def clear_agent_history(
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     session_id: str | None = Query(None, description="会话 ID（可选）"),
 ):
     from sqlalchemy import text
@@ -175,7 +193,7 @@ async def clear_agent_history(
 
     async with async_session_factory() as db:
         if session_id:
-            session_key = _stable_session_uuid(session_id)
+            session_key = _stable_session_uuid(scope_agent_session(session_id, user_id))
             await db.execute(text(
                 "DELETE FROM agent_session WHERE id = :id AND user_id = :user_id"
             ), {"id": session_key, "user_id": user_id})
@@ -188,7 +206,7 @@ async def clear_agent_history(
 
 
 @app.get("/api/v1/todos", response_model=Result)
-async def list_todos(user_id: int = Query(..., description="用户 ID")):
+async def list_todos(user_id: int = Depends(get_authenticated_user_id)):
     from agent_service.graph.todo_service import list_todos as list_active_todos
 
     todos = await list_active_todos(user_id, status="ACTIVE")
@@ -197,7 +215,7 @@ async def list_todos(user_id: int = Query(..., description="用户 ID")):
 
 @app.get("/api/v1/todos/history", response_model=Result)
 async def list_todo_history(
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     limit: int = Query(50, ge=1, le=100, description="返回数量"),
 ):
     from agent_service.graph.todo_service import list_todo_history as list_history
@@ -206,7 +224,7 @@ async def list_todo_history(
 
 
 @app.put("/api/v1/todos/{todo_id}/done", response_model=Result)
-async def complete_todo(todo_id: int, user_id: int = Query(..., description="用户 ID")):
+async def complete_todo(todo_id: int, user_id: int = Depends(get_authenticated_user_id)):
     from agent_service.graph.todo_service import complete_todo as mark_done
 
     return Result.success(await mark_done(user_id, todo_id=todo_id))

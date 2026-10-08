@@ -9,13 +9,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Query, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from common.utils.authentication import get_authenticated_user_id
 from common.config import settings
 from common.database import get_db, init_db
-from common.exceptions import AppException
+from common.exceptions import AppException, NotFoundException
 from common.schemas.response import Result, PageResult
 from common.schemas.task import TaskCreateDTO, TaskUpdateDTO
 from common.schemas.schedule import ScheduleCreateDTO, ScheduleUpdateDTO
@@ -50,7 +50,32 @@ app.add_middleware(
 
 UPLOAD_DIR = Path(__file__).resolve().parents[1] / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/media", StaticFiles(directory=str(UPLOAD_DIR)), name="media")
+@app.get("/media/{kind}/{filename}")
+async def get_attachment(
+    kind: str, filename: str,
+    user_id: int = Depends(get_authenticated_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve an attachment only to its owning user."""
+    import re
+
+    match = re.fullmatch(r"(task|schedule)-(\d+)-[0-9a-f]{16}\.(jpg|png|webp|gif)", filename)
+    if not match or match.group(1) != kind:
+        raise NotFoundException("附件")
+    record_id = int(match.group(2))
+    if kind == "task":
+        item = await TaskService(db).get_task_for_user(user_id, record_id)
+        attachments = item.attachments
+    else:
+        attachments = await ScheduleService(db).list_attachments(user_id, record_id)
+    attachment = next((item for item in attachments if item.file_name == filename), None)
+    path = (UPLOAD_DIR / kind / filename).resolve()
+    if not attachment or not path.is_relative_to(UPLOAD_DIR.resolve()) or not path.is_file():
+        raise NotFoundException("附件")
+    return FileResponse(
+        path, media_type=attachment.content_type,
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 @app.exception_handler(AppException)
@@ -80,7 +105,7 @@ async def health_check():
 @app.post("/api/v1/tasks", response_model=Result)
 async def create_task(
     dto: TaskCreateDTO,
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """创建任务（自动冲突检测）"""
@@ -91,7 +116,7 @@ async def create_task(
 
 @app.get("/api/v1/tasks", response_model=Result)
 async def list_tasks(
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     start: str = Query(None, description="开始时间 YYYY-MM-DD"),
     end: str = Query(None, description="结束时间 YYYY-MM-DD"),
     page: int = Query(1, ge=1),
@@ -115,7 +140,7 @@ async def list_tasks(
 @app.get("/api/v1/tasks/{task_id}", response_model=Result)
 async def get_task(
     task_id: int,
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """获取任务详情"""
@@ -128,7 +153,7 @@ async def get_task(
 async def update_task(
     task_id: int,
     dto: TaskUpdateDTO,
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """更新任务"""
@@ -140,7 +165,7 @@ async def update_task(
 @app.delete("/api/v1/tasks/{task_id}", response_model=Result)
 async def delete_task(
     task_id: int,
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """删除任务"""
@@ -152,7 +177,7 @@ async def delete_task(
 @app.post("/api/v1/tasks/{task_id}/images", response_model=Result)
 async def upload_task_image(
     task_id: int,
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     file: UploadFile = File(..., description="图片文件"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -163,7 +188,7 @@ async def upload_task_image(
 
 @app.get("/api/v1/schedules", response_model=Result)
 async def list_schedules(
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     target_date: str | None = Query(None, alias="date", description="日期 YYYY-MM-DD"),
     semester: str | None = Query(None, description="学期标识，不传则当前学期"),
     page: int = Query(1, ge=1),
@@ -193,7 +218,7 @@ async def list_schedules(
 @app.post("/api/v1/schedules", response_model=Result)
 async def create_schedule(
     dto: ScheduleCreateDTO,
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """手动新增一条课表日程。"""
@@ -204,7 +229,7 @@ async def create_schedule(
 @app.get("/api/v1/schedules/{schedule_id}", response_model=Result)
 async def get_schedule(
     schedule_id: int,
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """获取课表记录详情。"""
@@ -216,7 +241,7 @@ async def get_schedule(
 async def update_schedule(
     schedule_id: int,
     dto: ScheduleUpdateDTO,
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """修改已有课表日程。"""
@@ -227,7 +252,7 @@ async def update_schedule(
 @app.delete("/api/v1/schedules/{schedule_id}", response_model=Result)
 async def delete_schedule(
     schedule_id: int,
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """删除已有课表日程。"""
@@ -238,7 +263,7 @@ async def delete_schedule(
 @app.get("/api/v1/schedules/{schedule_id}/images", response_model=Result)
 async def list_schedule_images(
     schedule_id: int,
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """查询课表日程图片。"""
@@ -249,7 +274,7 @@ async def list_schedule_images(
 @app.post("/api/v1/schedules/{schedule_id}/images", response_model=Result)
 async def upload_schedule_image(
     schedule_id: int,
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     file: UploadFile = File(..., description="图片文件"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -262,7 +287,7 @@ async def upload_schedule_image(
 async def delete_schedule_image(
     schedule_id: int,
     image_id: int,
-    user_id: int = Query(..., description="用户 ID"),
+    user_id: int = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """删除课表日程图片。"""

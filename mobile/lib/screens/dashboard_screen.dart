@@ -120,6 +120,7 @@ class DashboardScreen extends StatelessWidget {
                 child: TaskCard(
                   task: task,
                   mediaBaseUrl: state.config.timelineServiceUrl,
+                  mediaToken: state.session?.token,
                   onEdit: () => _editTask(context, task),
                   onUploadImage: () => _uploadTaskImage(context, task),
                   onComplete: () => _completeTask(context, task),

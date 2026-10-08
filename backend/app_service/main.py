@@ -14,10 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.config import settings
 from common.database import get_db, init_db
-from common.exceptions import AppException, UnauthorizedException
+from common.exceptions import AppException
 from common.schemas.response import Result, PageResult
-from common.schemas.user import UserCreateDTO, UserLoginDTO
-from common.utils.auth_session import get_login_session, delete_login_session
+from common.schemas.user import UserCreateDTO, UserLoginDTO, UserDTO
+from common.utils.auth_session import delete_login_session
+from common.utils.authentication import get_current_user
 from common.utils.jwt import decode_access_token
 
 from app_service.services.user_service import UserService
@@ -124,31 +125,9 @@ async def logout(authorization: str | None = Header(default=None, alias="Authori
 
 
 @app.get("/api/v1/users/me", response_model=Result)
-async def get_current_user_info(
-    authorization: str | None = Header(default=None, alias="Authorization"),
-):
-    """获取当前用户信息，优先从 JWT + Redis 会话解析。"""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise UnauthorizedException("请先登录")
-
-    token = authorization.removeprefix("Bearer ").strip()
-    payload = decode_access_token(token)
-    if not payload:
-        raise UnauthorizedException("登录已过期")
-
-    session_id = payload.get("sid")
-    if not session_id:
-        raise UnauthorizedException("登录已过期")
-
-    session = await get_login_session(session_id)
-    if not session:
-        raise UnauthorizedException("登录已过期")
-
-    user = session.get("user") or {}
-    if str(user.get("id")) != str(payload.get("sub")):
-        raise UnauthorizedException("登录已失效")
-
-    return Result.success(user)
+async def get_current_user_info(user: UserDTO = Depends(get_current_user)):
+    """Resolve the same authenticated identity used by the business services."""
+    return Result.success(user.model_dump(mode="json"))
 
 
 @app.get("/api/v1/users", response_model=Result)
