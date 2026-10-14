@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import '../core/api/api_client.dart';
+import '../core/api/api_exception.dart';
 import '../core/config/api_config.dart';
 import '../models/agent_chat.dart';
 import '../models/auth_session.dart';
@@ -222,6 +223,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<TaskItem?> createTask({
+    required String requestId,
     required String title,
     required DateTime startTime,
     required DateTime endTime,
@@ -238,6 +240,7 @@ class AppState extends ChangeNotifier {
     await _runBusy(() async {
       task = await TaskService(_timelineClient).createTask(
         userId: current.user.id,
+        requestId: requestId,
         title: title,
         startTime: startTime,
         endTime: endTime,
@@ -260,6 +263,7 @@ class AppState extends ChangeNotifier {
       await TaskService(_timelineClient).updateStatus(
         userId: current.user.id,
         taskId: task.id,
+        version: task.version,
         status: TaskStatus.completed,
       );
       await _loadTasks(current.user.id, _selectedDate);
@@ -298,6 +302,7 @@ class AppState extends ChangeNotifier {
       await TaskService(_timelineClient).updateTask(
         userId: current.user.id,
         taskId: task.id,
+        version: task.version,
         title: title,
         startTime: startTime,
         endTime: endTime,
@@ -590,6 +595,13 @@ class AppState extends ChangeNotifier {
     try {
       await action();
     } catch (error) {
+      if (error is ApiException && error.statusCode == 409 && _session != null) {
+        try {
+          await _loadTasks(_session!.user.id, _selectedDate);
+        } catch (_) {
+          // Keep the original conflict message if refresh is unavailable.
+        }
+      }
       _error = error.toString();
       rethrow;
     } finally {

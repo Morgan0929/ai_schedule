@@ -74,6 +74,16 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
         action = task.get("action", "")
         params = task.get("params", {})
 
+        if action in ("update_task", "update_task_tool") and "version" not in params:
+            # Carry a previously read snapshot into the write instead of silently
+            # replacing it with the newest version during confirmation.
+            matches = [item for item in state.get("calendar_events", [])
+                       if item.get("source", "task") == "task" and item.get("version") is not None
+                       and ((params.get("task_id") is not None and item.get("id") == params["task_id"])
+                            or (params.get("task_id") is None and params.get("title") == item.get("title")))]
+            if len(matches) == 1:
+                params = {**params, "version": matches[0]["version"]}
+
         # === Middleware: Tool Retry (with_retry 包装) ===
         @with_retry(max_attempts=2, base_delay=1.0)
         async def _call_with_retry():
@@ -105,6 +115,10 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
                 elif isinstance(tool_result, dict) and tool_result.get("conflicts"):
                     conflicts_found.extend(tool_result["conflicts"])
             elif action in ("update_task", "update_task_tool"):
+                if not isinstance(tool_result, dict) or tool_result.get("status") != "updated":
+                    message = tool_result.get("error", "日程更新失败，请重新查询后再试") if isinstance(tool_result, dict) else "日程更新失败"
+                    actions_taken.append(f"更新未完成：{message}")
+                    continue
                 # 从 tool_result 提取, fallback 到 params
                 title = params.get('title', '')
                 new_time = ''
@@ -151,7 +165,7 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
                     tasks_created.append(tool_result["id"])
                     actions_taken.append(f"创建任务「{tool_result.get('title', '')}」")
                 elif isinstance(tool_result, dict):
-                    actions_taken.append(f"已处理「{tool_result.get('title', params.get('title', ''))}」")
+                    actions_taken.append(f"创建未完成：{tool_result.get('error', '请稍后查询原请求结果')}")
             elif action == "create_pending":
                 if isinstance(tool_result, dict):
                     if tool_result.get("id"):
@@ -186,19 +200,8 @@ async def tools_executor_node(state: AgentState) -> dict[str, Any]:
                 external_data["weather"] = tool_result
                 print(f"[TOOLS] WEATHER RESULT: {json.dumps(tool_result, ensure_ascii=False, default=str)[:300]}")
 
-        # ── Fallback: update_task 工具失败时仍产出可消费的输出 ──
         if not result.get("success") and action in ("update_task", "update_task_tool"):
-            title = params.get('title', '')
-            new_time = params.get('new_time', '')
-            if title and new_time:
-                actions_taken.append(f"已将「{title}」调整到 {new_time[:16]}")
-                if "updated_tasks" not in state:
-                    state["updated_tasks"] = []
-                state["updated_tasks"].append({
-                    "id": 0, "title": title, "new_time": new_time,
-                })
-            elif title:
-                actions_taken.append(f"已更新任务「{title}」")
+            actions_taken.append(f"更新未完成：{result.get('error', '请重新查询后再试')}")
 
     result = {
         "calendar_events": calendar_events,
@@ -310,36 +313,21 @@ async def pending_conflict_detector_node(state: AgentState) -> dict[str, Any]:
             "error": None,
         }
 
-    # ── 无冲突 → 直接写入数据库, 避免 Redis PendingTask 往返拖慢规则路径 ──
+    # Commit through the same durable request protocol, without requiring Redis.
     try:
-        from common.database import async_session_factory
-        from timeline_service.models.task_model import TaskModel
-        from timeline_service.repository.task_repo import TaskRepository
-
-        async with async_session_factory() as db:
-            task = await TaskRepository(db).create(TaskModel(
-                user_id=user_id,
-                title=pending["title"],
-                start_time=datetime.fromisoformat(pending["start_time"]),
-                end_time=datetime.fromisoformat(pending.get("end_time", pending["start_time"])),
-                priority="MEDIUM",
-                status="PENDING",
-                location="",
-                category="PERSONAL",
-                tags=[],
-                extra_data={},
-            ))
-            await db.commit()
+        from agent_service.graph.pending_task import _commit_pending_payload
+        result = await _commit_pending_payload(pending, pending["ref_id"], user_id)
+        if not result.get("id"):
+            return {"conflicts_found": [], "conflict_count": 0, "_pending_event": None,
+                    "actions_taken": state.get("actions_taken", []) + [result.get("error", "日程创建未完成")],
+                    "error": result.get("error", "日程创建未完成")}
         title = pending["title"]
         t = pending.get("start_time", "")[:16]
         return {
-            "conflicts_found": [],
-            "conflict_count": 0,
-            "tasks_created": state.get("tasks_created", []) + [task.id],
-            "actions_taken": state.get("actions_taken", []) + [
-                f"已记录「{title}」\n时间：{t}"],
-            "_pending_event": None,
-            "error": None,
+            "conflicts_found": [], "conflict_count": 0,
+            "tasks_created": state.get("tasks_created", []) + [result["id"]],
+            "actions_taken": state.get("actions_taken", []) + [f"已记录「{title}」\n时间：{t}"],
+            "_pending_event": None, "error": None,
         }
     except Exception as exc:
         return {

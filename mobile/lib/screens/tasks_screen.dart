@@ -3,6 +3,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../app_scope.dart';
 import '../core/utils/date_format.dart';
+import '../core/utils/request_id.dart';
 import '../models/course_item.dart';
 import '../models/task_item.dart';
 import '../widgets/app_snack_bar.dart';
@@ -465,6 +466,8 @@ class TaskEditorSheet extends StatefulWidget {
 }
 
 class _TaskEditorSheetState extends State<TaskEditorSheet> {
+  final String _creationRequestId = newRequestId();
+  bool _submitting = false;
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
@@ -678,6 +681,9 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
   }
 
   Future<void> _submit() async {
+    if (_submitting) {
+      return;
+    }
     if (!_formKey.currentState!.validate()) {
       return;
     }
@@ -686,11 +692,13 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
       return;
     }
     final state = AppScope.of(context);
+    setState(() => _submitting = true);
     try {
       final existing = widget.task;
       TaskItem? saved = existing;
       if (existing == null) {
         saved = await state.createTask(
+          requestId: _creationRequestId,
           title: _titleController.text.trim(),
           description: _descriptionController.text.trim(),
           location: _locationController.text.trim(),
@@ -722,6 +730,10 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
       if (mounted) {
         showErrorSnackBar(context, state.error ?? '保存日程失败');
         state.clearError();
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _submitting = false);
       }
     }
   }

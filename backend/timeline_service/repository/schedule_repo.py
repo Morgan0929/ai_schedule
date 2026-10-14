@@ -2,8 +2,10 @@
 课表数据访问层
 """
 from datetime import date
-from sqlalchemy import select, delete
+from sqlalchemy import update, select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
+from common.exceptions import ConflictException
 from timeline_service.models.schedule_model import (
     ScheduleModel,
     ScheduleAttachmentModel,
@@ -80,14 +82,31 @@ class ScheduleRepository:
         result = await self.db.execute(query)
         return list(result.scalars().all()), total
 
+    async def update_if_version(self, record_id: int, user_id: int, version: int, values: dict) -> ScheduleModel | None:
+        """Compare and increment the version in the same SQL statement."""
+        result = await self.db.execute(
+            update(ScheduleModel)
+            .where(ScheduleModel.id == record_id, ScheduleModel.user_id == user_id, ScheduleModel.version == version)
+            .values(**values, version=ScheduleModel.version + 1)
+            .returning(ScheduleModel)
+            .execution_options(synchronize_session=False, populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
     async def update(self, schedule: ScheduleModel) -> ScheduleModel:
-        await self.db.flush()
+        try:
+            await self.db.flush()
+        except StaleDataError as exc:
+            raise ConflictException("日程已被修改，请刷新后确认修改内容并重新提交") from exc
         await self.db.refresh(schedule)
         return schedule
 
     async def delete(self, schedule: ScheduleModel) -> bool:
         await self.db.delete(schedule)
-        await self.db.flush()
+        try:
+            await self.db.flush()
+        except StaleDataError as exc:
+            raise ConflictException("日程已被修改，请刷新后确认修改内容并重新提交") from exc
         return True
 
     async def add_attachments(

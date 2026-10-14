@@ -1,6 +1,7 @@
 class CourseItem {
   const CourseItem({
     required this.id,
+    this.version = 1,
     required this.courseName,
     required this.weekDay,
     this.teacher,
@@ -13,6 +14,7 @@ class CourseItem {
   });
 
   final int id;
+  final int version;
   final String courseName;
   final int weekDay;
   final String? teacher;
@@ -47,6 +49,7 @@ class CourseItem {
   factory CourseItem.fromJson(Map<String, dynamic> json) {
     return CourseItem(
       id: json['id'] as int,
+      version: json['version'] as int? ?? 1,
       courseName: json['course_name']?.toString() ?? '',
       weekDay: json['week_day'] as int? ?? 1,
       teacher: json['teacher']?.toString(),

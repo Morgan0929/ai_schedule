@@ -70,8 +70,24 @@
 
 ### GET /api/v1/tasks?start=...&end=...
 ### POST /api/v1/tasks
+
+创建任务要求 `Idempotency-Key` 请求头。相同用户、相同键、相同内容重试返回首次结果；
+处理中返回 202，内容不一致返回 409，原任务已删除返回 410。
+`GET /api/v1/task-requests/{request_id}` 查询当前用户的请求状态。
+租期接管和客户端重试边界见 [创建幂等说明](task_idempotency.md)。
 ### PUT /api/v1/tasks/{id}
 ### DELETE /api/v1/tasks/{id}
+
+任务和课表响应包含 `version`（初始值 1）。
+`PUT /api/v1/tasks/{id}` 和 `PUT /api/v1/schedules/{id}` 必须携带读取时的版本号，例如：
+
+```json
+{"version": 1, "location": "图书馆"}
+```
+
+更新成功返回递增后的版本；版本冲突返回 HTTP 409，提示刷新后确认修改内容并重新提交。
+缺少或传入无效版本号返回 HTTP 422。身份来源和归属校验见 [用户鉴权说明](user_authorization.md)。
+已有数据库迁移与并发控制见 [版本号乐观锁](optimistic_locking.md)。
 
 ### GET /api/v1/schedules?user_id=1&date=2026-08-12
 

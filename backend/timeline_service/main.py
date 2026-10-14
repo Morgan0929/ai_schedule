@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Query, Depends, UploadFile, File
+from fastapi import FastAPI, Request, Query, Depends, UploadFile, File, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,7 @@ from common.schemas.schedule import ScheduleCreateDTO, ScheduleUpdateDTO
 
 from timeline_service.services.task_service import TaskService
 from timeline_service.services.schedule_service import ScheduleService
+from timeline_service.services.task_creation import TaskCreationService, get_task_creation_service
 
 # Ensure schedule attachment metadata is registered before init_db().
 import timeline_service.models.schedule_model  # noqa: F401
@@ -106,12 +107,41 @@ async def health_check():
 async def create_task(
     dto: TaskCreateDTO,
     user_id: int = Depends(get_authenticated_user_id),
-    db: AsyncSession = Depends(get_db),
+    request_id: str = Header(..., alias="Idempotency-Key"),
+    creation: TaskCreationService = Depends(get_task_creation_service),
 ):
-    """创建任务（自动冲突检测）"""
-    service = TaskService(db)
-    task = await service.create_task(dto, user_id)
-    return Result.created(task.model_dump(mode="json"))
+    """Create once per user and request key, including response-loss retries."""
+    outcome = await creation.create(user_id, request_id, dto)
+    if outcome.status == "SUCCEEDED":
+        return JSONResponse(status_code=201, content=Result.created(outcome.result).model_dump(),
+                            headers={"Idempotency-Replayed": str(outcome.replayed).lower()})
+    if outcome.status == "DELETED":
+        return JSONResponse(status_code=410, content=Result(
+            code=410, message="原创建请求已完成，但日程已被删除；重新创建需使用新请求标识",
+            data=outcome.result,
+        ).model_dump())
+    if outcome.status == "FAILED":
+        code = outcome.response_code or 503
+        return JSONResponse(status_code=code, content=Result.error(
+            code, (outcome.result or {}).get("message", "创建失败"),
+        ).model_dump())
+    status_url = f"/api/v1/task-requests/{request_id}"
+    return JSONResponse(status_code=202, headers={"Retry-After": "1", "Location": status_url},
+                        content=Result(code=202, message="请求正在处理，请稍后查询或使用原标识重试",
+                                       data={"request_id": request_id, "status": "PROCESSING",
+                                             "status_url": status_url}).model_dump())
+
+
+@app.get("/api/v1/task-requests/{request_id}", response_model=Result)
+async def get_creation_status(
+    request_id: str,
+    user_id: int = Depends(get_authenticated_user_id),
+    creation: TaskCreationService = Depends(get_task_creation_service),
+):
+    outcome = await creation.lookup(user_id, request_id)
+    return Result.success({"request_id": request_id, "status": outcome.status,
+                           "result": outcome.result, "response_code": outcome.response_code,
+                           "can_retry": outcome.can_retry})
 
 
 @app.get("/api/v1/tasks", response_model=Result)

@@ -78,7 +78,7 @@ def create_pending(title: str, start_time: str, end_time: str = "",
                    source: str = "user_request") -> dict:
     """创建 PendingTask dict (未写入 Redis)"""
     return {
-        "ref_id": f"pending_{uuid.uuid4().hex[:8]}",
+        "ref_id": f"pending_{uuid.uuid4().hex}",
         "title": title,
         "start_time": start_time,
         "end_time": end_time or start_time,
@@ -268,56 +268,62 @@ async def _check_pending_conflicts_shared(pending: dict, user_id: int) -> list[d
         return []
 
 
-async def _commit_pending_shared(ref_id: str, user_id: int,
-                                 overrides: dict = None) -> dict:
-    """Commit a pending task through the configured SQLAlchemy database."""
-    pending = await get_pending(ref_id)
-    if not pending:
-        return {"error": f"PendingTask not found: {ref_id}"}
+async def _commit_pending_payload(pending: dict | None, ref_id: str, user_id: int,
+                                  overrides: dict = None) -> dict:
+    """Persist the pending operation before removing its disposable Redis copy."""
+    from common.database import async_session_factory
+    from common.exceptions import AppException
+    from common.schemas.task import TaskCreateDTO
+    from timeline_service.services.task_creation import TaskCreationService
 
-    title = pending["title"]
-    start_time = (overrides or {}).get("start_time", pending["start_time"])
-    end_time = (overrides or {}).get("end_time") or pending.get("end_time", start_time)
+    service = TaskCreationService(async_session_factory)
+    request_id = f"pending:{ref_id}"
     try:
-        start = datetime.fromisoformat(start_time)
-        end = datetime.fromisoformat(end_time)
-    except (TypeError, ValueError) as exc:
-        return {"error": str(exc), "status": "commit_failed"}
-
-    await delete_pending(ref_id)
-    try:
-        from common.database import async_session_factory
-        from timeline_service.models.task_model import TaskModel
-        from timeline_service.repository.task_repo import TaskRepository
-
-        async with async_session_factory() as db:
-            repo = TaskRepository(db)
-            existing = await repo.find_by_user_time_range(
-                user_id, start - timedelta(minutes=5), start + timedelta(minutes=5)
-            )
-            existing = [task for task in existing if task.title == title]
-            if existing:
-                await db.rollback()
-                return {"id": existing[0].id, "title": title,
-                        "status": "already_exists", "ref_id": ref_id}
-
-            task = await repo.create(TaskModel(
-                user_id=user_id,
-                title=title,
-                start_time=start,
-                end_time=end,
-                priority="MEDIUM",
-                status="PENDING",
-                location="",
-                category="PERSONAL",
-                tags=[],
-                extra_data={},
-            ))
-            await db.commit()
-            return {"id": task.id, "title": title, "start_time": start_time,
-                    "status": "created", "ref_id": ref_id}
+        if pending:
+            start_time = (overrides or {}).get("start_time", pending["start_time"])
+            end_time = (overrides or {}).get("end_time") or pending.get("end_time", start_time)
+            start = datetime.fromisoformat(start_time)
+            end = datetime.fromisoformat(end_time)
+            old_start = datetime.fromisoformat(pending["start_time"])
+            if not (overrides or {}).get("end_time") and start != old_start:
+                duration = end - old_start
+                end = start + (duration if duration > timedelta(0) else timedelta(hours=1))
+            if end == start and not (overrides or {}).get("end_time"):
+                end = start + timedelta(hours=1)
+            dto = TaskCreateDTO(title=pending["title"], start_time=start, end_time=end, location="")
+        else:
+            stored = await service.stored_payload(user_id, request_id)
+            if not stored:
+                return {"error": f"PendingTask not found: {ref_id}", "status": "not_found"}
+            # Payload validation still applies after Redis expiry or cleanup.
+            original = TaskCreateDTO.model_validate(stored)
+            changes = dict(overrides or {})
+            if "start_time" in changes and "end_time" not in changes:
+                start = datetime.fromisoformat(changes["start_time"])
+                changes["end_time"] = start + (original.end_time - original.start_time)
+            dto = TaskCreateDTO.model_validate({**stored, **changes})
+        outcome = await service.create(user_id, request_id, dto)
+        if outcome.status == "SUCCEEDED":
+            await delete_pending(ref_id)
+            task = outcome.result
+            return {"id": task["id"], "title": task["title"], "start_time": task["start_time"],
+                    "status": "already_exists" if outcome.replayed else "created", "ref_id": ref_id}
+        if outcome.status == "DELETED":
+            return {"error": "原日程已被删除，重新创建需要发起新的操作", "status": "deleted", "code": 410}
+        if outcome.status == "PROCESSING":
+            return {"error": "原请求仍在处理中，请稍后查询", "status": "processing", "code": 202}
+        return {"error": (outcome.result or {}).get("message", "创建失败"),
+                "status": "commit_failed", "code": outcome.response_code or 503}
+    except AppException as exc:
+        return {"error": exc.message, "status": "commit_failed", "code": exc.code}
     except Exception as exc:
         return {"error": str(exc), "status": "commit_failed"}
+
+
+async def _commit_pending_shared(ref_id: str, user_id: int,
+                                 overrides: dict = None) -> dict:
+    pending = await get_pending(ref_id)
+    return await _commit_pending_payload(pending, ref_id, user_id, overrides)
 
 
 # Keep pending-task flows on the same database as the regular task tools.

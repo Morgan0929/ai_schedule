@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS sys_user (
 -- 任务/行程表
 CREATE TABLE IF NOT EXISTS task (
     id BIGSERIAL PRIMARY KEY,
+    version INTEGER NOT NULL DEFAULT 1,
     user_id BIGINT NOT NULL REFERENCES sys_user(id) ON DELETE CASCADE,
     title VARCHAR(256) NOT NULL,
     description TEXT,

@@ -20,6 +20,7 @@ class ScheduleAttachmentDTO(BaseModel):
 class ScheduleDTO(BaseModel):
     id: int
     user_id: int
+    version: int = Field(1, ge=1)
     source: str
     course_name: str
     teacher: str | None = None
@@ -58,6 +59,7 @@ class ScheduleCreateDTO(BaseModel):
 
 
 class ScheduleUpdateDTO(BaseModel):
+    version: int = Field(..., ge=1, strict=True, description="读取记录时的版本号")
     course_name: str | None = Field(None, min_length=1, max_length=256)
     teacher: str | None = Field(None, max_length=128)
     location: str | None = Field(None, max_length=256)

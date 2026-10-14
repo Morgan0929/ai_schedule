@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from database_support import create_test_database, close_test_database
 from common.config import settings
 from common.database import Base, get_db
 from common.exceptions import ServiceUnavailableException
@@ -26,6 +27,8 @@ from crawler_service import main as crawler
 from timeline_service import main as timeline
 from timeline_service.models.task_model import TaskModel
 from timeline_service.models.schedule_model import ScheduleModel, ScheduleAttachmentModel
+from timeline_service.models.request_record import RequestRecord
+from timeline_service.services.task_creation import TaskCreationService, get_task_creation_service
 
 
 class FakeRedis:
@@ -48,11 +51,11 @@ class UserAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         self.redis_patch = patch("common.redis_client.get_redis", AsyncMock(return_value=self.redis))
         self.redis_patch.start()
         self.addCleanup(self.redis_patch.stop)
-        self.engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        self.engine, self.database_cleanup = await create_test_database(":memory:")
         self.factory = async_sessionmaker(self.engine, expire_on_commit=False)
         async with self.engine.begin() as connection:
             await connection.run_sync(lambda conn: Base.metadata.create_all(
-                conn, tables=[TaskModel.__table__, ScheduleModel.__table__, ScheduleAttachmentModel.__table__],
+                conn, tables=[TaskModel.__table__, ScheduleModel.__table__, ScheduleAttachmentModel.__table__, RequestRecord.__table__],
             ))
 
         async def test_db():
@@ -69,6 +72,7 @@ class UserAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         for module in (timeline, agent, crawler, users):
             self.overrides[module] = dict(module.app.dependency_overrides)
             module.app.dependency_overrides[get_db] = test_db
+            module.app.dependency_overrides[get_task_creation_service] = lambda: TaskCreationService(self.factory)
             self.clients[module] = httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=module.app), base_url="http://test",
             )
@@ -95,16 +99,16 @@ class UserAuthorizationTests(unittest.IsolatedAsyncioTestCase):
             await client.aclose()
             module.app.dependency_overrides.clear()
             module.app.dependency_overrides.update(self.overrides[module])
-        await self.engine.dispose()
+        await close_test_database(self.engine, self.database_cleanup)
 
     async def create_resource(self, kind, user_id=2):
         body = ({"title": "Private meeting", "start_time": "2026-10-08T15:00:00",
                  "end_time": "2026-10-08T16:00:00"} if kind == "tasks" else
                 {"course_name": "Private course", "week_day": 4})
         response = await self.clients[timeline].post(
-            f"/api/v1/{kind}", json=body, headers=self.headers[user_id],
+            f"/api/v1/{kind}", json=body, headers={**self.headers[user_id], "Idempotency-Key": f"test-{kind}-{user_id}"},
         )
-        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.status_code, 201 if kind == "tasks" else 200, response.text)
         self.assertEqual(response.json()["data"]["user_id"], user_id)
         return response.json()["data"]["id"]
 
@@ -112,7 +116,7 @@ class UserAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         for module in (timeline, agent, crawler):
             for route in module.app.routes:
                 path = getattr(route, "path", "")
-                private = (path.startswith(("/api/v1/tasks", "/api/v1/schedules", "/media/"))
+                private = (path.startswith(("/api/v1/tasks", "/api/v1/task-requests", "/api/v1/schedules", "/media/"))
                            if module is timeline else
                            path.startswith(("/api/v1/agent/chat", "/api/v1/agent/history", "/api/v1/todos"))
                            if module is agent else path.startswith("/api/v1/crawl/schedule/"))
@@ -131,7 +135,7 @@ class UserAuthorizationTests(unittest.IsolatedAsyncioTestCase):
             path = f"/api/v1/{kind}/{record_id}"
             response = await self.clients[timeline].get(path, headers=self.headers[2])
             self.assertEqual(response.status_code, 200, response.text)
-            body = {"title" if kind == "tasks" else "course_name": "Updated"}
+            body = {"title" if kind == "tasks" else "course_name": "Updated", "version": 1}
             response = await self.clients[timeline].put(path, json=body, headers=self.headers[2])
             self.assertEqual(response.status_code, 200, response.text)
             response = await self.clients[timeline].delete(path, headers=self.headers[2])
@@ -143,7 +147,7 @@ class UserAuthorizationTests(unittest.IsolatedAsyncioTestCase):
             path = f"/api/v1/{kind}/{record_id}"
             for method in ("GET", "PUT", "DELETE"):
                 with self.subTest(kind=kind, method=method):
-                    response = await self.clients[timeline].request(method, path, json={}, headers=self.headers[1])
+                    response = await self.clients[timeline].request(method, path, json={"version": 1}, headers=self.headers[1])
                     self.assertEqual(response.status_code, 404, response.text)
             response = await self.clients[timeline].get(path, headers=self.headers[2])
             self.assertEqual(response.status_code, 200)
@@ -179,6 +183,69 @@ class UserAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         with patch("common.utils.authentication.get_login_session", AsyncMock(side_effect=ServiceUnavailableException("Redis"))):
             response = await self.clients[timeline].get("/api/v1/tasks", headers=self.headers[1])
         self.assertEqual(response.status_code, 503)
+
+    async def test_versions_increment_and_stale_edits_do_not_overwrite(self):
+        for kind in ("tasks", "schedules"):
+            record_id = await self.create_resource(kind)
+            path = f"/api/v1/{kind}/{record_id}"
+            before = await self.clients[timeline].get(path, headers=self.headers[2])
+            self.assertEqual(before.json()["data"]["version"], 1)
+            response = await self.clients[timeline].put(path, json={"version": 1, "location": "Room A"}, headers=self.headers[2])
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["data"]["version"], 2)
+            response = await self.clients[timeline].put(path, json={"version": 1, "location": "Room B"}, headers=self.headers[2])
+            self.assertEqual(response.status_code, 409, response.text)
+            self.assertIn("刷新", response.json()["message"])
+            after = await self.clients[timeline].get(path, headers=self.headers[2])
+            self.assertEqual(after.json()["data"]["location"], "Room A")
+            self.assertEqual(after.json()["data"]["version"], 2)
+            response = await self.clients[timeline].put(path, json={"version": 2, "location": "Room B"}, headers=self.headers[2])
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["data"]["version"], 3)
+
+    async def test_missing_or_invalid_versions_cannot_bypass_the_lock(self):
+        for kind in ("tasks", "schedules"):
+            record_id = await self.create_resource(kind)
+            path = f"/api/v1/{kind}/{record_id}"
+            for body in ({"location": "Overwrite"}, {"version": None}, {"version": 0},
+                         {"version": True}, {"version": "1"}):
+                response = await self.clients[timeline].put(path, json=body, headers=self.headers[2])
+                self.assertEqual(response.status_code, 422, response.text)
+            after = await self.clients[timeline].get(path, headers=self.headers[2])
+            self.assertEqual(after.json()["data"]["version"], 1)
+
+    async def test_partial_update_preserves_other_fields(self):
+        record_id = await self.create_resource("tasks")
+        path = f"/api/v1/tasks/{record_id}"
+        response = await self.clients[timeline].put(path, json={"version": 1, "location": "Library"}, headers=self.headers[2])
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"]["title"], "Private meeting")
+        self.assertEqual(response.json()["data"]["start_time"], "2026-10-08T15:00:00")
+
+    async def test_agent_obeys_snapshot_version_and_does_not_report_false_success(self):
+        from agent_service.graph import tools
+        from agent_service.graph.graph import tools_executor_node
+
+        record_id = await self.create_resource("tasks")
+        path = f"/api/v1/tasks/{record_id}"
+        await self.clients[timeline].put(path, json={"version": 1, "location": "New location"}, headers=self.headers[2])
+        with patch.object(tools, "async_session_factory", self.factory):
+            result = await tools_executor_node({
+                "user_id": 2, "intent": "update_event",
+                "calendar_events": [{"id": record_id, "title": "Private meeting", "version": 1}],
+                "sub_tasks": [{"action": "update_task", "params": {
+                    "task_id": record_id, "title": "Private meeting", "new_time": "2026-10-08T17:00:00",
+                }}],
+            })
+            self.assertEqual(result["tasks_updated"], [])
+            self.assertIn("刷新", "".join(result["actions_taken"]))
+            self.assertNotIn("已将", "".join(result["actions_taken"]))
+            updated = await tools._update_task_shared(2, task_id=record_id, new_time="2026-10-08T17:00:00")
+            self.assertEqual(updated["status"], "updated")
+            self.assertEqual(updated["version"], 3)
+        after = await self.clients[timeline].get(path, headers=self.headers[2])
+        self.assertEqual(after.json()["data"]["location"], "New location")
+        self.assertEqual(after.json()["data"]["end_time"], "2026-10-08T18:00:00")
 
     async def test_agent_cannot_select_another_user_or_conversation(self):
         for path in ("/api/v1/agent/chat", "/api/v1/agent/chat/stream"):

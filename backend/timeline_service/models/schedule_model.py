@@ -20,6 +20,8 @@ class ScheduleModel(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
     source: Mapped[str] = mapped_column(String(64), default="gdut")  # 数据来源: gdut / manual
 
     # 课程基本信息

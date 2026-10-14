@@ -31,6 +31,7 @@ class TaskService {
 
   Future<TaskItem> createTask({
     required int userId,
+    required String requestId,
     required String title,
     required DateTime startTime,
     required DateTime endTime,
@@ -41,6 +42,7 @@ class TaskService {
   }) async {
     final data = await client.post(
       '/api/v1/tasks',
+      idempotencyKey: requestId,
       query: {'user_id': userId.toString()},
       body: {
         'title': title,
@@ -59,12 +61,13 @@ class TaskService {
   Future<TaskItem> updateStatus({
     required int userId,
     required int taskId,
+    required int version,
     required TaskStatus status,
   }) async {
     final data = await client.put(
       '/api/v1/tasks/$taskId',
       query: {'user_id': userId.toString()},
-      body: {'status': statusToApi(status)},
+      body: {'status': statusToApi(status), 'version': version},
     ) as Map<String, dynamic>;
     return TaskItem.fromJson(data);
   }
@@ -72,6 +75,7 @@ class TaskService {
   Future<TaskItem> updateTask({
     required int userId,
     required int taskId,
+    required int version,
     required String title,
     required DateTime startTime,
     required DateTime endTime,
@@ -84,6 +88,7 @@ class TaskService {
       '/api/v1/tasks/$taskId',
       query: {'user_id': userId.toString()},
       body: {
+        'version': version,
         'title': title,
         'description': description?.isEmpty == true ? null : description,
         'start_time': startTime.toIso8601String(),
@@ -144,6 +149,7 @@ class TaskService {
       '/api/v1/schedules/${course.id}',
       query: {'user_id': userId.toString()},
       body: {
+        'version': course.version,
         'course_name': courseName,
         'teacher': teacher?.isEmpty == true ? null : teacher,
         'location': location?.isEmpty == true ? null : location,

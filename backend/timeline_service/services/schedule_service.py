@@ -10,7 +10,7 @@ from typing import Iterable
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from common.exceptions import BadRequestException, NotFoundException
+from common.exceptions import BadRequestException, NotFoundException, ConflictException
 from common.schemas.schedule import (
     ScheduleAttachmentDTO,
     ScheduleCreateDTO,
@@ -78,32 +78,36 @@ class ScheduleService:
         schedule = await self.repo.find_by_id(schedule_id)
         if not schedule or schedule.user_id != user_id:
             raise NotFoundException("课表记录", schedule_id)
+        if schedule.version != dto.version:
+            raise ConflictException("日程已被修改，请刷新后确认修改内容并重新提交")
 
         self._validate_schedule_fields(dto, schedule)
-        update_data = dto.model_dump(exclude_unset=True)
+        update_data = dto.model_dump(exclude_unset=True, exclude={"version"})
+        values = {}
         for key, value in update_data.items():
             if key == "raw_data" and value is not None:
                 value = json.dumps(value, ensure_ascii=False)
             if value is not None:
-                setattr(schedule, key, value)
-
-        await self.repo.update(schedule)
+                values[key] = value
+        updated = await self.repo.update_if_version(schedule_id, user_id, dto.version, values)
+        if updated is None:
+            raise ConflictException("日程已被修改，请刷新后确认修改内容并重新提交")
         await self.db.commit()
-        return await self._to_dto(schedule)
+        return await self._to_dto(updated)
 
     async def delete_schedule(self, user_id: int, schedule_id: int) -> bool:
         schedule = await self.repo.find_by_id(schedule_id)
         if not schedule or schedule.user_id != user_id:
             raise NotFoundException("课表记录", schedule_id)
         attachments = await self.repo.list_attachments(schedule.id, user_id)
+        await self.repo.delete_attachments(schedule.id, user_id)
+        await self.repo.delete(schedule)
+        await self.db.commit()
         for attachment in attachments:
             try:
                 Path(attachment.storage_path).unlink(missing_ok=True)
             except OSError:
                 pass
-        await self.repo.delete_attachments(schedule.id, user_id)
-        await self.repo.delete(schedule)
-        await self.db.commit()
         return True
 
     async def list_attachments(self, user_id: int, schedule_id: int) -> list[ScheduleAttachmentDTO]:
@@ -160,6 +164,7 @@ class ScheduleService:
         return ScheduleDTO(
             id=schedule.id,
             user_id=schedule.user_id,
+            version=schedule.version,
             source=schedule.source,
             course_name=schedule.course_name,
             teacher=schedule.teacher,

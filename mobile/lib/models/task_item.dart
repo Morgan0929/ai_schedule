@@ -9,6 +9,7 @@ enum TaskCategory { meeting, trip, personal, work }
 class TaskItem {
   const TaskItem({
     required this.id,
+    this.version = 1,
     required this.userId,
     required this.title,
     required this.startTime,
@@ -23,6 +24,7 @@ class TaskItem {
   });
 
   final int id;
+  final int version;
   final int userId;
   final String title;
   final String? description;
@@ -47,6 +49,7 @@ class TaskItem {
   factory TaskItem.fromJson(Map<String, dynamic> json) {
     return TaskItem(
       id: json['id'] as int,
+      version: json['version'] as int? ?? 1,
       userId: json['user_id'] as int,
       title: json['title']?.toString() ?? '',
       description: json['description']?.toString(),

@@ -30,7 +30,7 @@ class TaskService:
         self.repo = TaskRepository(db)
         self.conflict_detector = ConflictDetector()
 
-    async def create_task(self, dto: TaskCreateDTO, user_id: int) -> TaskDTO:
+    async def create_task(self, dto: TaskCreateDTO, user_id: int, *, creation_request_id: str | None = None) -> TaskDTO:
         """创建任务（含冲突检测）"""
         # 参数校验
         if not dto.validate_time_range():
@@ -69,6 +69,7 @@ class TaskService:
             location=dto.location,
             category=dto.category.value if dto.category else "PERSONAL",
             tags=dto.tags or [],
+            extra_data={"creation_request_id": creation_request_id} if creation_request_id else {},
         )
         task = await self.repo.create(task)
         return self._to_dto(task)
@@ -81,31 +82,32 @@ class TaskService:
         return self._to_dto(task)
 
     async def update_task(self, task_id: int, dto: TaskUpdateDTO) -> TaskDTO:
-        """更新任务"""
         task = await self.repo.find_by_id(task_id)
         if not task:
             raise NotFoundException("任务", task_id)
-
-        # 只更新传入的字段
-        update_data = dto.model_dump(exclude_unset=True)
-        for key, value in update_data.items():
-            if value is not None:
-                # 处理枚举值
-                if hasattr(value, 'value'):
-                    value = value.value
-                setattr(task, key, value)
-
-        task = await self.repo.update(task)
-        return self._to_dto(task)
+        return await self.update_task_for_user(task.user_id, task_id, dto)
 
     async def update_task_for_user(
         self, user_id: int, task_id: int, dto: TaskUpdateDTO
     ) -> TaskDTO:
-        """Update a task only when it belongs to the requesting user."""
         task = await self.repo.find_by_id(task_id)
         if not task or task.user_id != user_id:
             raise NotFoundException("task", task_id)
-        return await self.update_task(task_id, dto)
+        if task.version != dto.version:
+            raise ConflictException("日程已被修改，请刷新后确认修改内容并重新提交")
+        update_data = dto.model_dump(exclude_unset=True, exclude={"version"}, mode="python")
+        values = {
+            key: getattr(value, "value", value)
+            for key, value in update_data.items() if value is not None
+        }
+        start = values.get("start_time", task.start_time)
+        end = values.get("end_time", task.end_time)
+        if end <= start:
+            raise BadRequestException("结束时间必须晚于开始时间")
+        updated = await self.repo.update_if_version(task_id, user_id, dto.version, values)
+        if updated is None:
+            raise ConflictException("日程已被修改，请刷新后确认修改内容并重新提交")
+        return self._to_dto(updated)
 
     async def get_task_for_user(self, user_id: int, task_id: int) -> TaskDTO:
         """Fetch a task only when it belongs to the requesting user."""
@@ -125,12 +127,13 @@ class TaskService:
         task = await self.repo.find_by_id(task_id)
         if not task or task.user_id != user_id:
             raise NotFoundException("task", task_id)
+        deleted = await self.delete_task(task_id)
         for attachment in self._attachments(task):
             try:
                 Path(self._storage_path(attachment["file_url"])).unlink(missing_ok=True)
             except OSError:
                 pass
-        return await self.delete_task(task_id)
+        return deleted
 
     async def list_tasks(
         self, user_id: int, start: datetime = None, end: datetime = None,

@@ -10,6 +10,7 @@ if sys.platform == "win32":
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import inspect, text
 
 from common.config import BACKEND_DIR, settings
 
@@ -54,5 +55,23 @@ async def get_db():
 
 async def init_db():
     """Create ORM tables for local development."""
+    import timeline_service.models.request_record  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await ensure_schedule_versions(conn)
+
+
+async def ensure_schedule_versions(conn):
+    """Add optimistic versions to existing tables; create_all does not alter them."""
+    def missing_columns(sync_conn):
+        inspector = inspect(sync_conn)
+        tables = set(inspector.get_table_names())
+        return [table for table in ("task", "schedule") if table in tables
+                and "version" not in {column["name"] for column in inspector.get_columns(table)}]
+
+    for table in await conn.run_sync(missing_columns):
+        # The table names above are fixed, never supplied by a request.
+        if_not_exists = "IF NOT EXISTS " if conn.dialect.name == "postgresql" else ""
+        await conn.execute(text(
+            f"ALTER TABLE {table} ADD COLUMN {if_not_exists}version INTEGER NOT NULL DEFAULT 1"
+        ))

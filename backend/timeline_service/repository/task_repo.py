@@ -2,8 +2,10 @@
 任务数据访问层
 """
 from datetime import datetime
-from sqlalchemy import select, and_
+from sqlalchemy import update, select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
+from common.exceptions import ConflictException
 from timeline_service.models.task_model import TaskModel
 
 
@@ -54,9 +56,23 @@ class TaskRepository:
         await self.db.refresh(task)
         return task
 
+    async def update_if_version(self, record_id: int, user_id: int, version: int, values: dict) -> TaskModel | None:
+        """Compare and increment the version in the same SQL statement."""
+        result = await self.db.execute(
+            update(TaskModel)
+            .where(TaskModel.id == record_id, TaskModel.user_id == user_id, TaskModel.version == version)
+            .values(**values, version=TaskModel.version + 1)
+            .returning(TaskModel)
+            .execution_options(synchronize_session=False, populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
     async def update(self, task: TaskModel) -> TaskModel:
         """更新任务"""
-        await self.db.flush()
+        try:
+            await self.db.flush()
+        except StaleDataError as exc:
+            raise ConflictException("日程已被修改，请刷新后确认修改内容并重新提交") from exc
         await self.db.refresh(task)
         return task
 
@@ -65,7 +81,10 @@ class TaskRepository:
         task = await self.find_by_id(task_id)
         if task:
             await self.db.delete(task)
-            await self.db.flush()
+            try:
+                await self.db.flush()
+            except StaleDataError as exc:
+                raise ConflictException("日程已被修改，请刷新后确认修改内容并重新提交") from exc
             return True
         return False
 

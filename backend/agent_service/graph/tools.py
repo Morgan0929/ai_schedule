@@ -31,7 +31,7 @@ async def execute_tool(tool_name: str, params: dict[str, Any], user_id: int) -> 
     sig = inspect.signature(tool_func)
     valid_params = {"user_id": user_id}
     for k, v in params.items():
-        if k in sig.parameters:
+        if k != "user_id" and k in sig.parameters:
             valid_params[k] = v
 
     try:
@@ -745,7 +745,7 @@ async def _create_task_shared(user_id: int, title: str, start_time: str = None,
                               end_time: str = None, start: str = None,
                               end: str = None, priority: str = "MEDIUM",
                               location: str = None,
-                              category: str = "PERSONAL") -> dict:
+                              category: str = "PERSONAL", request_id: str = None) -> dict:
     """Create a task through the shared SQLAlchemy session."""
     from common.schemas.task import TaskCreateDTO, PriorityEnum, TaskCategoryEnum
     from common.exceptions import ConflictException
@@ -766,12 +766,17 @@ async def _create_task_shared(user_id: int, title: str, start_time: str = None,
     )
 
     try:
-        async with async_session_factory() as db:
-            task = await TaskService(db).create_task(dto, user_id)
-            await db.commit()
-            return {"id": task.id, "title": task.title,
-                    "start_time": task.start_time.isoformat(),
-                    "end_time": task.end_time.isoformat(), "status": "created"}
+        import uuid
+        from timeline_service.services.task_creation import TaskCreationService
+        outcome = await TaskCreationService(async_session_factory).create(
+            user_id, request_id or f"agent:{uuid.uuid4().hex}", dto,
+        )
+        if outcome.status != "SUCCEEDED":
+            return {"error": "原日程已删除" if outcome.status == "DELETED" else "原请求尚未完成，请稍后查询",
+                    "status": outcome.status.lower()}
+        task = outcome.result
+        return {"id": task["id"], "title": task["title"], "start_time": task["start_time"],
+                "end_time": task["end_time"], "status": "already_exists" if outcome.replayed else "created"}
     except ConflictException as exc:
         return {"error": exc.message, "status": "conflict",
                 "conflict_level": "HARD", "conflicts": exc.detail or []}
@@ -781,10 +786,10 @@ async def _create_task_shared(user_id: int, title: str, start_time: str = None,
 
 async def _update_task_shared(user_id: int, task_id: int = None, title: str = None,
                               new_time: str = None, start_time: str = None,
-                              **kwargs) -> dict:
+                              version: int | None = None, **kwargs) -> dict:
     """Resolve and update a task from one user-scoped SQLAlchemy session."""
     from common.schemas.task import TaskUpdateDTO, PriorityEnum
-    from common.exceptions import NotFoundException
+    from common.exceptions import NotFoundException, ConflictException
     from timeline_service.services.task_service import TaskService
 
     if isinstance(kwargs.get("priority"), str):
@@ -806,20 +811,26 @@ async def _update_task_shared(user_id: int, task_id: int = None, title: str = No
             task_id = existing.id if existing else None
         if task_id is None:
             return {"error": "task_id or title is required", "status": "missing_param"}
+        existing = await service.repo.find_by_id(task_id)
+        if not existing or existing.user_id != user_id:
+            return {"error": f"task not found: {task_id}", "status": "not_found"}
+        # Explicit snapshot versions are preserved; otherwise capture the version
+        # when this new command reads the record, before computing any changes.
+        expected_version = version if version is not None else existing.version
         if time_value and "end_time" not in update_fields:
-            existing = await service.repo.find_by_id(task_id)
-            if existing:
-                duration = existing.end_time - existing.start_time
-                update_fields["end_time"] = datetime.fromisoformat(time_value) + duration
+            duration = existing.end_time - existing.start_time
+            update_fields["end_time"] = datetime.fromisoformat(time_value) + duration
         try:
             task = await service.update_task_for_user(
-                user_id, task_id, TaskUpdateDTO(**update_fields)
+                user_id, task_id, TaskUpdateDTO(version=expected_version, **update_fields)
             )
         except NotFoundException:
             return {"error": f"task not found: {task_id}", "status": "not_found"}
+        except ConflictException as exc:
+            return {"error": exc.message, "status": "version_conflict", "code": 409}
         await db.commit()
         return {"id": task.id, "title": task.title,
-                "new_time": time_value or "", "status": "updated"}
+                "new_time": time_value or "", "version": task.version, "status": "updated"}
 
 
 async def _delete_task_shared(user_id: int, task_id: int = None, title: str = "",

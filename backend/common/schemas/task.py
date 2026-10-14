@@ -43,6 +43,7 @@ class TaskDTO(BaseModel):
     """任务响应"""
     id: int
     user_id: int
+    version: int = Field(1, ge=1)
     title: str
     description: str | None = None
     start_time: datetime
@@ -78,6 +79,7 @@ class TaskCreateDTO(BaseModel):
 
 class TaskUpdateDTO(BaseModel):
     """更新任务请求"""
+    version: int = Field(..., ge=1, strict=True, description="读取记录时的版本号")
     title: str | None = Field(None, min_length=1, max_length=256)
     description: str | None = None
     start_time: datetime | None = None

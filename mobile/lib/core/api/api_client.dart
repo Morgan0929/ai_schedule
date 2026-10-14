@@ -26,12 +26,16 @@ class ApiClient {
     String path, {
     Map<String, String?> query = const {},
     Object? body,
+    String? idempotencyKey,
   }) async {
     final uri = _uri(path, query);
     return _send(
       () => http.post(
         uri,
-        headers: _headers(),
+        headers: {
+          ..._headers(),
+          if (idempotencyKey != null) 'Idempotency-Key': idempotencyKey,
+        },
         body: body == null ? null : jsonEncode(body),
       ),
     );
@@ -177,7 +181,8 @@ class ApiClient {
     if (payload is Map<String, dynamic> && payload.containsKey('code')) {
       final code = payload['code'];
       if (code != 200 && code != 201) {
-        throw ApiException(payload['message']?.toString() ?? '请求失败');
+        throw ApiException(payload['message']?.toString() ?? '请求失败',
+            statusCode: response.statusCode);
       }
       return payload['data'];
     }
